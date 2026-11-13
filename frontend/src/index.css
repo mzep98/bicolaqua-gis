@@ -9,39 +9,8 @@
     height: 100%;
     margin: 0;
     padding: 0;
-    background-color: #FDFDFD;
-    color: #033F56;
+    background-color: #CBD5E1;
+    color: #0F172A;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
-}
-
-/* Remaps your existing UI colors to the logo palette without changing any layout */
-.bg-\[\#003D5B\] {
-  background-color: #033F56 !important;
-}
-.bg-\[\#153344\] {
-  background-color: #01658E !important;
-}
-.text-\[\#003D5B\],
-.text-\[\#153344\] {
-  color: #033F56 !important;
-}
-.text-\[\#607582\] {
-  color: #01658E !important;
-}
-.text-\[\#EDAE49\] {
-  color: #FE9659 !important;
-}
-.bg-\[\#EDAE49\] {
-  background-color: #FD7132 !important;
-  color: #FDFDFD !important;
-}
-.border-\[\#D9E4E9\] {
-  border-color: #91EFF7 !important;
-}
-.border-\[\#003D5B\] {
-  border-color: #01658E !important;
-}
-.bg-\[\#F4F7F9\] {
-  background-color: #F2FCFE !important;
 }
