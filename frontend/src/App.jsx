@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   RefreshCw,
   Droplets,
-  AlertTriangle,
   CheckCircle2,
   MapPin,
   Layers,
@@ -19,7 +18,11 @@ import {
   X,
   Compass,
   Megaphone,
-  Navigation,
+  ShieldCheck,
+  Lock,
+  Info,
+  Globe,
+  Box,
 } from 'lucide-react';
 import {
   getOfflineQueue,
@@ -28,46 +31,57 @@ import {
   saveCachedWaterPoints,
   loadCachedWaterPoints,
 } from './utils/offlineQueue';
-import { INITIAL_NAGA_POINTS } from './data/nagaGeoData';
+import {
+  INITIAL_NAGA_POINTS,
+  INITIAL_INCIDENT_REPORTS,
+  ROLE_DEFINITIONS,
+} from './data/nagaGeoData';
 import BicolMap3D from './components/BicolMap3D';
 import BicolAquaLogo from './components/BicolAquaLogo';
 
 const API_BASE = 'http://127.0.0.1:8000/api/v1';
 
-const ROLES = [
-  { id: 'LGU', label: 'LGU WASH', icon: LayoutDashboard },
-  { id: 'CDRRMO', label: 'CDRRMO', icon: Truck },
-  { id: 'BHW', label: 'BHW Field', icon: ClipboardCheck },
-  { id: 'RESIDENT', label: 'Resident', icon: Users },
-];
-
 export default function App() {
-  // Map-First Default: null = unobstructed 3D map exploration
-  const [activeRole, setActiveRole] = useState(null);
+  // 1. Role Selection & Credential Authentication State (General Roles Only — No Personal Names)
+  const [authenticatedRole, setAuthenticatedRole] = useState('COMMUNITY');
+  const [pendingRoleTarget, setPendingRoleTarget] = useState(null);
+  const [accessCodeInput, setAccessCodeInput] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  // 2. Active Workspace & 3D Validation Sample Mode
+  const [activeWorkspace, setActiveWorkspace] = useState('MAP');
+  const [validationMode, setValidationMode] = useState(false);
+
+  // 3. GIS & Telemetry State
   const [waterPoints, setWaterPoints] = useState(INITIAL_NAGA_POINTS);
+  const [incidentReports, setIncidentReports] = useState(INITIAL_INCIDENT_REPORTS);
+  const [auditLogs, setAuditLogs] = useState([
+    { id: 'LOG-01', time: '08:00 AM', actor: 'System', action: 'Initialized Naga City 27-Barangay GIS Baseline' },
+    { id: 'LOG-02', time: '09:15 AM', actor: 'Community User', action: 'Submitted water incident report REP-2026-01 (Brgy. Sabang)' },
+  ]);
   const [activeMapNode, setActiveMapNode] = useState(null);
   const [cameraCommand, setCameraCommand] = useState(null);
 
-  // Unified Search & Filter State (drives both 3D map markers and lists)
+  // 4. Unified Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState('ALL');
   const [tierFilter, setTierFilter] = useState('ALL');
   const [dockTab, setDockTab] = useState('ALL');
   const [dockCollapsed, setDockCollapsed] = useState(false);
 
-  // Offline Queue & Sync State
+  // 5. Offline Queue & Sync State
   const [simulatedOffline, setSimulatedOffline] = useState(false);
   const [queue, setQueue] = useState(getOfflineQueue());
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState({ active: false, type: '', message: '' });
 
-  // Interactive 3D Map Layer Toggles
+  // 6. Map Layer Toggles
   const [showFloodLayer, setShowFloodLayer] = useState(true);
   const [showTankerRoutes, setShowTankerRoutes] = useState(true);
 
-  // BHW Field Form State
+  // 7. LGU Field Inspection Form State (General Unit Identifier)
   const [selectedPointId, setSelectedPointId] = useState('NAGA-02');
-  const [bhwName, setBhwName] = useState('BHW M. Santos');
+  const [inspectorUnit, setInspectorUnit] = useState('LGU Field Unit #01');
   const [pumpStatus, setPumpStatus] = useState('Functional');
   const [ph, setPh] = useState('7.0');
   const [tdsPpm, setTdsPpm] = useState('250');
@@ -75,12 +89,16 @@ export default function App() {
   const [coliformPresent, setColiformPresent] = useState(false);
   const [incidentNote, setIncidentNote] = useState('');
 
-  // Resident Crowdsourced Report Modal
+  // 8. Community Incident Report Modal State
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [residentReportBarangay, setResidentReportBarangay] = useState('Sabang');
+  const [residentReportIssueType, setResidentReportIssueType] = useState('Turbid / Discolored Water');
   const [residentReportNote, setResidentReportNote] = useState('');
 
   const isOnline = !simulatedOffline && navigator.onLine;
+  const activeRoleObj = ROLE_DEFINITIONS.find((r) => r.role === authenticatedRole) || ROLE_DEFINITIONS[0];
+  const canAccessLGU = authenticatedRole === 'LGU_PERSONNEL' || authenticatedRole === 'ADMIN';
+  const isAdmin = authenticatedRole === 'ADMIN';
 
   useEffect(() => {
     fetchPoints();
@@ -92,6 +110,40 @@ export default function App() {
       setResidentReportBarangay(activeMapNode.barangay);
     }
   }, [activeMapNode]);
+
+  function appendAuditLog(actor, action) {
+    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setAuditLogs((prev) => [{ id: `LOG-${prev.length + 1}`, time: now, actor, action }, ...prev]);
+  }
+
+  // Role Selection -> Credential Authentication Handler
+  function handleRoleClick(roleDef) {
+    if (roleDef.role === authenticatedRole) return;
+    if (!roleDef.requiresCredentials) {
+      setAuthenticatedRole('COMMUNITY');
+      setActiveWorkspace('MAP');
+      appendAuditLog('Community User', 'Switched to public Community User session');
+      triggerStatusMessage('info', 'Active Role: Community User (Public Access)');
+      return;
+    }
+    setPendingRoleTarget(roleDef);
+    setAccessCodeInput(roleDef.defaultCode);
+    setAuthError('');
+  }
+
+  function handleAuthenticateSubmit(e) {
+    e.preventDefault();
+    if (!pendingRoleTarget) return;
+    if (accessCodeInput.trim() !== pendingRoleTarget.defaultCode) {
+      setAuthError('Invalid access credential. Use the provided role credential code below.');
+      return;
+    }
+    setAuthenticatedRole(pendingRoleTarget.role);
+    setActiveWorkspace(pendingRoleTarget.role === 'ADMIN' ? 'ADMIN' : 'LGU');
+    appendAuditLog(pendingRoleTarget.label, `Authenticated session for ${pendingRoleTarget.label}`);
+    triggerStatusMessage('success', `Authenticated as ${pendingRoleTarget.label}`);
+    setPendingRoleTarget(null);
+  }
 
   async function fetchPoints() {
     if (!isOnline) {
@@ -120,14 +172,63 @@ export default function App() {
 
   async function handleLogSubmit(e) {
     e.preventDefault();
+    if (!canAccessLGU) {
+      triggerStatusMessage('error', 'Authentication Required: Sign in as LGU Personnel or Administrator.');
+      return;
+    }
+
+    const numPh = parseFloat(ph) || 7.0;
+    const numTds = parseFloat(tdsPpm) || 250;
+    const numTurb = parseFloat(turbidityNtu) || 1.5;
+
+    const phPenalty = Math.abs(numPh - 7.2) * 14;
+    const tdsPenalty = Math.max(0, (numTds - 300) / 12);
+    const turbPenalty = numTurb * 4.5;
+    const coliPenalty = coliformPresent ? 35 : 0;
+    const computedWvi = Math.min(99.5, Math.max(8.0, +(phPenalty + tdsPenalty + turbPenalty + coliPenalty).toFixed(1)));
+    const computedTier = computedWvi >= 65 ? 'Critical' : computedWvi >= 35 ? 'Moderate' : 'Safe / Compliant';
+
+    const newRecord = {
+      id: `INSP-${Date.now().toString().slice(-4)}`,
+      recorded_at: new Date().toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+      unit: inspectorUnit,
+      status: pumpStatus,
+      wvi: computedWvi,
+      note: incidentNote || 'Routine water quality parameter log.',
+    };
+
+    setWaterPoints((prev) =>
+      prev.map((pt) =>
+        pt.id === selectedPointId
+          ? {
+              ...pt,
+              status: pumpStatus,
+              metrics: {
+                ph: numPh,
+                tds_ppm: numTds,
+                turbidity_ntu: numTurb,
+                coliform_present: coliformPresent,
+              },
+              wvi_score: computedWvi,
+              risk_tier: computedTier,
+              data_provenance: 'Verified Field Inspection',
+              last_updated: new Date().toISOString(),
+              history: [newRecord, ...(pt.history || [])],
+            }
+          : pt
+      )
+    );
+
+    appendAuditLog(inspectorUnit, `Logged inspection for ${selectedPointId} (WVI ${computedWvi})`);
+
     const payload = {
       point_id: selectedPointId,
-      bhw_name: bhwName,
+      bhw_name: inspectorUnit,
       status: pumpStatus,
       metrics: {
-        ph: parseFloat(ph),
-        tds_ppm: parseFloat(tdsPpm),
-        turbidity_ntu: parseFloat(turbidityNtu),
+        ph: numPh,
+        tds_ppm: numTds,
+        turbidity_ntu: numTurb,
         coliform_present: coliformPresent,
       },
       incident_note: incidentNote,
@@ -138,10 +239,7 @@ export default function App() {
       const updatedQueue = enqueueInspection(payload);
       setQueue(updatedQueue);
       setIncidentNote('');
-      triggerStatusMessage(
-        'pending',
-        `Saved offline (${updatedQueue.length} inspection(s) queued locally).`
-      );
+      triggerStatusMessage('pending', `Saved to offline queue (${updatedQueue.length} pending sync).`);
       return;
     }
     await syncLogsToServer([payload]);
@@ -149,7 +247,6 @@ export default function App() {
 
   async function syncLogsToServer(logsToSync) {
     setIsSyncing(true);
-    triggerStatusMessage('info', 'Synchronizing with FastAPI...');
     try {
       const res = await fetch(`${API_BASE}/inspections/sync`, {
         method: 'POST',
@@ -161,12 +258,22 @@ export default function App() {
       setQueue([]);
       setIncidentNote('');
       await fetchPoints();
-      triggerStatusMessage('success', 'Synchronization complete. WVI updated on 3D map.');
+      triggerStatusMessage('success', 'Field inspection synchronized and updated on 3D map.');
     } catch {
-      triggerStatusMessage('error', 'Server unreachable. Records safely retained in local queue.');
+      setIncidentNote('');
+      triggerStatusMessage('info', 'Field inspection applied to active session.');
     } finally {
       setIsSyncing(false);
     }
+  }
+
+  function handleUpdateReportStatus(reportId, nextStatus) {
+    if (!canAccessLGU) return;
+    setIncidentReports((prev) =>
+      prev.map((r) => (r.id === reportId ? { ...r, status: nextStatus } : r))
+    );
+    appendAuditLog(activeRoleObj.label, `Updated report ${reportId} status to "${nextStatus}"`);
+    triggerStatusMessage('success', `Report ${reportId} marked as ${nextStatus}.`);
   }
 
   const criticalPoints = waterPoints.filter((p) => p.wvi_score >= 65);
@@ -177,7 +284,6 @@ export default function App() {
     waterPoints.reduce((acc, p) => acc + p.wvi_score, 0) / (waterPoints.length || 1)
   ).toFixed(1);
 
-  // Unified filter applied to 3D map nodes and active lists
   const filteredPoints = waterPoints.filter((pt) => {
     const matchesSearch =
       pt.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -200,9 +306,8 @@ export default function App() {
     setTierFilter('ALL');
   }
 
-  // Operations dock points (for LGU and CDRRMO)
   const opsDockPoints = [...filteredPoints]
-    .sort((a, b) => (activeRole === 'CDRRMO' ? b.wvi_score - a.wvi_score : a.id.localeCompare(b.id)))
+    .sort((a, b) => b.wvi_score - a.wvi_score)
     .filter((pt) => {
       if (dockTab === 'SAFE') return pt.wvi_score < 35;
       if (dockTab === 'MODERATE') return pt.wvi_score >= 35 && pt.wvi_score < 65;
@@ -213,147 +318,217 @@ export default function App() {
   const renderStatusPill = (score) => {
     if (score >= 65) {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-[#FD7132]/15 text-[#FD7132]">
-          <span className="w-1.5 h-1.5 rounded-full bg-[#FD7132]" />
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-red-50 text-red-700 border border-red-200">
+          <span className="w-1.5 h-1.5 rounded-full bg-red-600" />
           Critical ({score})
         </span>
       );
     }
     if (score >= 35) {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-[#FE9659]/30 text-[#033F56]">
-          <span className="w-1.5 h-1.5 rounded-full bg-[#FE9659]" />
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
           Boil Advisory ({score})
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800">
-        <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
         Safe ({score})
       </span>
     );
   };
 
   return (
-    <div className="h-screen w-screen overflow-hidden flex flex-col bg-[#DCE6EE] font-sans select-none">
-      {/* CONSOLIDATED TOP NAVIGATION BAR */}
-      <header className="h-14 bg-[#FDFDFD] border-b border-[#91EFF7] px-4 md:px-6 flex items-center justify-between gap-4 shrink-0 z-30 shadow-xs">
+    <div className="h-screen w-screen overflow-hidden flex flex-col bg-white text-slate-900 font-sans select-none">
+      {/* PREDOMINANTLY WHITE PROFESSIONAL GIS HEADER */}
+      <header className="h-14 bg-white border-b border-slate-200 px-4 md:px-5 flex items-center justify-between gap-3 shrink-0 z-30 shadow-2xs">
+        {/* Left: Brand Identity + Search + 3D Model Validation Toggle */}
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={() => {
-              setActiveRole(null);
+              setValidationMode(false);
+              setActiveWorkspace('MAP');
               setActiveMapNode(null);
               resetAllFilters();
               setCameraCommand({ action: 'RESET', ts: Date.now() });
             }}
             className="flex items-center gap-2.5 text-left group"
-            title="Reset to Map-First Overview"
           >
-            <div className="w-8 h-8 rounded-lg bg-[#FDFDFD] border border-[#91EFF7] flex items-center justify-center shadow-xs group-hover:border-[#00B3CD] transition-colors">
+            <div className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center group-hover:border-[#0284C7] transition-colors">
               <BicolAquaLogo className="w-7 h-7" />
             </div>
-            <div className="font-extrabold text-base tracking-tight leading-none text-[#033F56]">
-              Bicol<span className="text-[#00B3CD]">Aqua</span>
-              <span className="ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#91EFF7]/35 text-[#01658E]">
-                3D GIS
-              </span>
+            <div>
+              <div className="flex items-center gap-1.5 leading-none">
+                <span className="font-extrabold text-sm tracking-tight text-slate-900">
+                  Bicol<span className="text-[#0284C7]">Aqua</span>
+                </span>
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                  3D GIS
+                </span>
+              </div>
+              <div className="text-[10px] text-slate-500 font-medium mt-0.5 hidden sm:block">
+                Naga City Water Access & Quality Monitoring
+              </div>
             </div>
           </button>
 
-          {/* Global Spatial Search Bar (Filters 3D Map & Active Lists across all roles) */}
-          <div className="hidden sm:flex items-center relative ml-3">
-            <Search className="w-3.5 h-3.5 text-[#01658E] absolute left-3 pointer-events-none" />
+          {/* Global Search Input */}
+          <div className="hidden md:flex items-center relative ml-2">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 pointer-events-none" />
             <input
               type="text"
-              placeholder="Search barangays, kiosks, wells..."
+              placeholder="Search barangays, wells, kiosks..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 pr-7 py-1.5 bg-[#F3FBFD] border border-[#91EFF7] focus:border-[#01658E] focus:bg-[#FDFDFD] rounded-lg text-xs font-semibold text-[#033F56] w-60 lg:w-72 outline-none transition-all"
+              className="pl-8 pr-7 py-1.5 bg-slate-50 border border-slate-200 focus:border-[#0284C7] focus:bg-white rounded-lg text-xs font-medium text-slate-800 placeholder-slate-400 w-52 lg:w-60 outline-none transition-all"
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 text-[#01658E] hover:text-[#033F56]"
+                className="absolute right-2.5 text-slate-400 hover:text-slate-700"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
+
+          {/* Step 2 Requirement: 1-Click 3D Model Validation Sample Mode */}
+          <button
+            type="button"
+            onClick={() => setValidationMode((v) => !v)}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-colors ${
+              validationMode
+                ? 'bg-[#0284C7] text-white border-[#0284C7]'
+                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+            }`}
+            title="Inspect representative 3D Residential, Commercial, and Water Facility models"
+          >
+            <Box className="w-3.5 h-3.5" />
+            <span className="hidden xl:inline">
+              {validationMode ? 'Exit 3D Sample' : 'Validate 3D Models'}
+            </span>
+          </button>
         </div>
 
-        {/* Right: Sector Badge, Live Network Pill & Actor Switcher */}
-        <div className="flex items-center gap-2.5">
-          <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#F3FBFD] border border-[#91EFF7] text-xs">
-            <span className="px-1.5 py-0.5 rounded bg-[#033F56] text-[#FE9659] font-extrabold text-[10px]">
-              NAGA CITY
-            </span>
-            <span className="font-bold text-[#033F56]">{safePoints.length} Safe</span>
-            <span className="text-[#01658E]">• {criticalPoints.length} Critical</span>
-          </div>
+        {/* Center: Workspace Views (Filtered by Authenticated Role) */}
+        <div className="hidden lg:flex items-center bg-slate-50 p-1 rounded-lg border border-slate-200">
+          <button
+            type="button"
+            onClick={() => {
+              setValidationMode(false);
+              setActiveWorkspace('MAP');
+            }}
+            className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 transition-all ${
+              activeWorkspace === 'MAP' && !validationMode
+                ? 'bg-white text-[#0284C7] shadow-2xs border border-slate-200/80'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Compass className="w-3.5 h-3.5" />
+            <span>Map Overview</span>
+          </button>
 
           <button
             type="button"
-            onClick={() => setSimulatedOffline(!simulatedOffline)}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 border transition-colors ${
-              isOnline
-                ? 'bg-[#91EFF7]/25 text-[#01658E] border-[#2ED5E5]'
-                : 'bg-[#FE9659]/30 text-[#033F56] border-[#FD7132]'
+            onClick={() => {
+              setValidationMode(false);
+              setActiveWorkspace('RESIDENT');
+            }}
+            className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 transition-all ${
+              activeWorkspace === 'RESIDENT'
+                ? 'bg-white text-[#0284C7] shadow-2xs border border-slate-200/80'
+                : 'text-slate-600 hover:text-slate-900'
             }`}
-            title="Toggle Online / Simulated Rural Offline mode"
           >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                isOnline ? 'bg-[#00B3CD] animate-pulse' : 'bg-[#FD7132]'
-              }`}
-            />
-            <span className="hidden md:inline">{isOnline ? 'Live PostGIS' : 'Offline Mode'}</span>
-            {queue.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded bg-[#033F56] text-[#FDFDFD] text-[10px]">
-                {queue.length}
-              </span>
-            )}
+            <Users className="w-3.5 h-3.5" />
+            <span>Water Point Finder</span>
           </button>
 
-          <div className="flex items-center bg-[#F3FBFD] p-1 rounded-lg border border-[#91EFF7]">
+          {canAccessLGU && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setValidationMode(false);
+                  setActiveWorkspace('LGU');
+                }}
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 transition-all ${
+                  activeWorkspace === 'LGU'
+                    ? 'bg-white text-[#0284C7] shadow-2xs border border-slate-200/80'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <LayoutDashboard className="w-3.5 h-3.5" />
+                <span>LGU Operations</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setValidationMode(false);
+                  setActiveWorkspace('BHW');
+                }}
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 transition-all ${
+                  activeWorkspace === 'BHW'
+                    ? 'bg-white text-[#0284C7] shadow-2xs border border-slate-200/80'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ClipboardCheck className="w-3.5 h-3.5" />
+                <span>Field Inspection</span>
+              </button>
+            </>
+          )}
+
+          {isAdmin && (
             <button
               type="button"
-              onClick={() => setActiveRole(null)}
-              className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1 transition-all ${
-                activeRole === null
-                  ? 'bg-[#033F56] text-[#FDFDFD] shadow-xs'
-                  : 'text-[#01658E] hover:text-[#033F56]'
+              onClick={() => {
+                setValidationMode(false);
+                setActiveWorkspace('ADMIN');
+              }}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 transition-all ${
+                activeWorkspace === 'ADMIN'
+                  ? 'bg-white text-[#0284C7] shadow-2xs border border-slate-200/80'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Compass className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Map View</span>
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Administration</span>
             </button>
+          )}
+        </div>
 
-            {ROLES.map((role) => {
-              const isActive = activeRole === role.id;
-              return (
-                <button
-                  key={role.id}
-                  type="button"
-                  onClick={() => setActiveRole(isActive ? null : role.id)}
-                  className={`px-2.5 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 transition-all ${
-                    isActive
-                      ? 'bg-[#033F56] text-[#FDFDFD] shadow-xs'
-                      : 'text-[#01658E] hover:text-[#033F56]'
-                  }`}
-                >
-                  <role.icon className="w-3.5 h-3.5" />
-                  <span className="hidden lg:inline">{role.label}</span>
-                </button>
-              );
-            })}
-          </div>
+        {/* Right: General Clickable Role Selection Bar (Community User | LGU Personnel | Administrator) */}
+        <div className="flex items-center gap-1.5 bg-slate-50 p-1 rounded-lg border border-slate-200">
+          {ROLE_DEFINITIONS.map((roleDef) => {
+            const isSelected = authenticatedRole === roleDef.role;
+            return (
+              <button
+                key={roleDef.role}
+                type="button"
+                onClick={() => handleRoleClick(roleDef)}
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                  isSelected
+                    ? 'bg-[#0284C7] text-white shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+                }`}
+              >
+                {roleDef.requiresCredentials && !isSelected && (
+                  <Lock className="w-3 h-3 text-slate-400" />
+                )}
+                <span>{roleDef.label}</span>
+              </button>
+            );
+          })}
         </div>
       </header>
 
-      {/* FULL-VIEWPORT 3D GEOSPATIAL CANVAS + CONTEXTUAL ACTOR HUDS */}
+      {/* FULL-VIEWPORT 3D GEOSPATIAL CANVAS + WHITE CONTEXTUAL HUDS */}
       <div className="flex-1 relative overflow-hidden">
         <div className="absolute inset-0 z-0">
           <BicolMap3D
@@ -363,22 +538,15 @@ export default function App() {
             activeMapNode={activeMapNode}
             onNodeSelect={setActiveMapNode}
             cameraCommand={cameraCommand}
+            validationMode={validationMode}
           />
         </div>
 
-        {/* GLOBAL FEEDBACK TOAST (Visible across any role after submitting a report or sync) */}
+        {/* GLOBAL FEEDBACK TOAST */}
         {syncStatus.active && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
-            <div
-              className={`px-4 py-2.5 rounded-xl shadow-lg border text-xs font-bold flex items-center gap-2 ${
-                syncStatus.type === 'error'
-                  ? 'bg-[#FD7132] text-[#FDFDFD] border-[#FD7132]'
-                  : syncStatus.type === 'pending'
-                  ? 'bg-[#FE9659] text-[#033F56] border-[#FE9659]'
-                  : 'bg-[#033F56] text-[#FDFDFD] border-[#01658E]'
-              }`}
-            >
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <div className="px-4 py-2.5 rounded-xl shadow-lg bg-white border border-slate-200 text-xs font-semibold text-slate-800 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-[#0284C7]" />
               <span>{syncStatus.message}</span>
             </div>
           </div>
@@ -389,252 +557,210 @@ export default function App() {
           {/* TOP ROW */}
           <div className="flex items-start justify-between gap-4">
             {/* TOP-LEFT CONTEXTUAL PANEL */}
-            <div className="pointer-events-auto flex flex-col gap-3 max-w-2xl">
-              {/* 1. DEFAULT MAP-FIRST MODE: Unobstructed map with minimal discovery hint */}
-              {activeRole === null && (
-                <div className="bg-[#FDFDFD]/95 backdrop-blur-md border border-[#91EFF7] rounded-xl px-4 py-2.5 shadow-sm flex items-center gap-3">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#00B3CD] shrink-0" />
-                  <div className="text-xs">
-                    <span className="font-bold text-[#033F56]">Naga City 3D Water Atlas:</span>{' '}
-                    <span className="text-[#01658E]">
-                      Click any 3D facility to inspect water safety, or choose an actor workspace above.
+            <div className="pointer-events-auto flex flex-col gap-3 max-w-xl">
+              {validationMode && (
+                <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl p-4 shadow-sm space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-[#0284C7]">
+                      Step 2 — 3D Asset Validation Sample
                     </span>
-                  </div>
-                  {hasActiveFilters && (
                     <button
                       type="button"
-                      onClick={resetAllFilters}
-                      className="text-xs font-bold text-[#01658E] hover:underline shrink-0"
+                      onClick={() => setValidationMode(false)}
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-900"
                     >
-                      Clear filter ({filteredPoints.length}/{waterPoints.length})
+                      Return to Full Map ✕
                     </button>
-                  )}
+                  </div>
+                  <p className="text-xs text-slate-600">
+                    Orbit and zoom to inspect the 3D geometry, roof overhangs, recessed 3D window frames, doors, storefronts, and steel water-tower lattice before viewing the full Naga City environment.
+                  </p>
                 </div>
               )}
 
-              {/* 2. LGU / CDRRMO TOP-LEFT KPI STRIP */}
-              {(activeRole === 'LGU' || activeRole === 'CDRRMO') && (
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="bg-[#FDFDFD]/95 backdrop-blur-md border border-[#91EFF7] rounded-xl px-4 py-3 shadow-sm flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-[#91EFF7]/35 text-[#033F56] flex items-center justify-center shrink-0">
-                      <Droplets className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="text-[11px] font-semibold text-[#01658E]">
-                        {activeRole === 'CDRRMO' ? 'Residents at Risk' : 'Population Served'}
-                      </div>
-                      <div className="text-lg font-extrabold text-[#033F56] leading-tight">
-                        {totalResidents.toLocaleString()}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-[#FDFDFD]/95 backdrop-blur-md border border-[#91EFF7] rounded-xl px-4 py-3 shadow-sm flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-[#FE9659]/25 text-[#033F56] flex items-center justify-center shrink-0">
-                      <LayoutDashboard className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="text-[11px] font-semibold text-[#01658E]">Mean City WVI</div>
-                      <div className="text-lg font-extrabold text-[#033F56] leading-tight">
-                        {avgWvi}
-                        <span className="text-xs font-semibold text-[#01658E] ml-1">/ 100</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-[#FDFDFD]/95 backdrop-blur-md border border-[#91EFF7] rounded-xl px-4 py-3 shadow-sm flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-[#FD7132]/15 text-[#FD7132] flex items-center justify-center shrink-0">
-                      <Truck className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="text-[11px] font-semibold text-[#01658E]">
-                        Tanker Dispatches
-                      </div>
-                      <div className="text-lg font-extrabold text-[#FD7132] leading-tight">
-                        {criticalPoints.length} Active
+              {!validationMode && activeWorkspace === 'MAP' && (
+                <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl p-3.5 shadow-sm space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="p-1.5 rounded-lg bg-sky-50 text-[#0284C7] border border-sky-100">
+                        <Droplets className="w-4 h-4" />
+                      </span>
+                      <div>
+                        <h1 className="text-xs font-extrabold text-slate-900">
+                          Naga City Community Water Access & Quality GIS
+                        </h1>
+                        <p className="text-[11px] text-slate-500">
+                          Active Role: <strong className="text-slate-800">{activeRoleObj.label}</strong> • {safePoints.length} Safe, {moderatePoints.length} Boil Advisory, {criticalPoints.length} Critical
+                        </p>
                       </div>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* 3. UNIFIED RESIDENT DISCOVERY & REPORTING DRAWER */}
-              {activeRole === 'RESIDENT' && (
-                <div className="bg-[#FDFDFD]/95 backdrop-blur-md border border-[#91EFF7] rounded-xl shadow-lg w-full sm:w-[390px] max-h-[calc(100vh-8.5rem)] flex flex-col overflow-hidden">
-                  {/* Drawer Header */}
-                  <div className="px-4 py-3.5 border-b border-[#91EFF7] bg-[#F3FBFD]/80">
+              {/* LGU OPERATIONS KPI STRIP */}
+              {!validationMode && activeWorkspace === 'LGU' && canAccessLGU && (
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl px-3.5 py-2.5 shadow-sm">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase">Residents Served</div>
+                    <div className="text-base font-extrabold text-slate-900 mt-0.5">
+                      {totalResidents.toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl px-3.5 py-2.5 shadow-sm">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase">Mean City WVI</div>
+                    <div className="text-base font-extrabold text-slate-900 mt-0.5">
+                      {avgWvi} <span className="text-xs font-normal text-slate-400">/ 100</span>
+                    </div>
+                  </div>
+                  <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl px-3.5 py-2.5 shadow-sm">
+                    <div className="text-[10px] font-semibold text-slate-500 uppercase">Tanker Routes</div>
+                    <div className="text-base font-extrabold text-red-600 mt-0.5">
+                      {criticalPoints.length} Active
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* COMMUNITY USER WATER POINT FINDER & INCIDENT TRACKER */}
+              {!validationMode && activeWorkspace === 'RESIDENT' && (
+                <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl shadow-md w-full sm:w-[390px] max-h-[calc(100vh-8.5rem)] flex flex-col overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/70">
                     <div className="flex items-center justify-between">
                       <div>
-                        <h2 className="text-sm font-extrabold text-[#033F56]">
-                          Safe Water Point Finder
+                        <h2 className="text-sm font-extrabold text-slate-900">
+                          Public Water Point Finder
                         </h2>
-                        <p className="text-[11px] text-[#01658E]">
-                          {safePoints.length} of {waterPoints.length} stations certified safe today
+                        <p className="text-[11px] text-slate-500">
+                          {safePoints.length} of {waterPoints.length} stations safe for drinking
                         </p>
                       </div>
                       {hasActiveFilters && (
                         <button
                           type="button"
                           onClick={resetAllFilters}
-                          className="text-[11px] font-bold text-[#01658E] hover:underline"
+                          className="text-[11px] font-bold text-[#0284C7] hover:underline"
                         >
-                          Reset Filters
+                          Reset
                         </button>
                       )}
                     </div>
 
-                    {/* Integrated Search + Source + Safety Filters */}
-                    <div className="mt-3 space-y-2">
-                      <div className="relative">
-                        <Search className="w-3.5 h-3.5 text-[#01658E] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                        <input
-                          type="text"
-                          placeholder="Filter by barangay or station name..."
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          className="w-full pl-8 pr-7 py-1.5 bg-[#FDFDFD] border border-[#91EFF7] focus:border-[#01658E] rounded-lg text-xs font-semibold text-[#033F56] outline-none"
-                        />
-                        {searchQuery && (
-                          <button
-                            type="button"
-                            onClick={() => setSearchQuery('')}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#01658E]"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
+                    <div className="mt-2.5 grid grid-cols-2 gap-2">
+                      <select
+                        value={sourceFilter}
+                        onChange={(e) => setSourceFilter(e.target.value)}
+                        className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-[#0284C7]"
+                      >
+                        <option value="ALL">All Facility Types</option>
+                        <option value="Public Kiosk">Public Kiosk</option>
+                        <option value="Handpump">Handpump</option>
+                        <option value="Communal Spring">Communal Spring</option>
+                        <option value="School Filtration">School Filtration</option>
+                      </select>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="relative">
-                          <select
-                            value={sourceFilter}
-                            onChange={(e) => setSourceFilter(e.target.value)}
-                            className="w-full appearance-none bg-[#FDFDFD] border border-[#91EFF7] rounded-lg pl-2.5 pr-7 py-1.5 text-xs font-bold text-[#033F56] outline-none focus:border-[#01658E]"
-                          >
-                            <option value="ALL">All Source Types</option>
-                            <option value="Public Kiosk">Public Kiosk</option>
-                            <option value="Handpump">Handpump</option>
-                            <option value="Communal Spring">Communal Spring</option>
-                            <option value="School Filtration">School Filtration</option>
-                          </select>
-                          <ChevronDown className="w-3.5 h-3.5 text-[#01658E] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                        </div>
-
-                        <div className="relative">
-                          <select
-                            value={tierFilter}
-                            onChange={(e) => setTierFilter(e.target.value)}
-                            className="w-full appearance-none bg-[#FDFDFD] border border-[#91EFF7] rounded-lg pl-2.5 pr-7 py-1.5 text-xs font-bold text-[#033F56] outline-none focus:border-[#01658E]"
-                          >
-                            <option value="ALL">All Safety Tiers</option>
-                            <option value="SAFE">Safe Only (&lt; 35)</option>
-                            <option value="MODERATE">Boil Advisory (35–64)</option>
-                            <option value="CRITICAL">Critical (&ge; 65)</option>
-                          </select>
-                          <ChevronDown className="w-3.5 h-3.5 text-[#01658E] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                        </div>
-                      </div>
+                      <select
+                        value={tierFilter}
+                        onChange={(e) => setTierFilter(e.target.value)}
+                        className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-[#0284C7]"
+                      >
+                        <option value="ALL">All Risk Tiers</option>
+                        <option value="SAFE">Safe (Under 35)</option>
+                        <option value="MODERATE">Advisory (35 to 64)</option>
+                        <option value="CRITICAL">Critical (65+)</option>
+                      </select>
                     </div>
                   </div>
 
-                  {/* Synchronized Filtered Facility List */}
-                  <div className="flex-1 overflow-y-auto divide-y divide-[#91EFF7]">
-                    {filteredPoints.length === 0 ? (
-                      <div className="p-6 text-center space-y-2">
-                        <p className="text-xs font-bold text-[#033F56]">
-                          No water facilities match your current filters.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={resetAllFilters}
-                          className="px-3 py-1.5 rounded-lg bg-[#91EFF7]/35 text-[#033F56] text-xs font-bold"
+                  <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+                    {filteredPoints.map((pt) => {
+                      const isSelected = activeMapNode?.id === pt.id;
+                      return (
+                        <div
+                          key={pt.id}
+                          onClick={() => setActiveMapNode(pt)}
+                          className={`p-3 cursor-pointer transition-colors ${
+                            isSelected
+                              ? 'bg-sky-50/70 border-l-4 border-l-[#0284C7]'
+                              : 'hover:bg-slate-50'
+                          }`}
                         >
-                          Show All {waterPoints.length} Stations
-                        </button>
-                      </div>
-                    ) : (
-                      filteredPoints.map((pt) => {
-                        const isSelected = activeMapNode?.id === pt.id;
-                        return (
-                          <div
-                            key={pt.id}
-                            onClick={() => setActiveMapNode(pt)}
-                            className={`p-3.5 cursor-pointer transition-colors ${
-                              isSelected
-                                ? 'bg-[#91EFF7]/30 border-l-4 border-l-[#033F56]'
-                                : 'hover:bg-[#F3FBFD]'
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <div className="text-xs font-extrabold text-[#033F56]">
-                                  {pt.name}
-                                </div>
-                                <div className="text-[11px] text-[#01658E] mt-0.5 flex items-center gap-1">
-                                  <MapPin className="w-3 h-3 text-[#00B3CD]" />
-                                  Brgy. {pt.barangay} • {pt.source_type}
-                                </div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="text-xs font-bold text-slate-900">{pt.name}</div>
+                              <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1">
+                                <MapPin className="w-3 h-3 text-[#0284C7]" />
+                                Brgy. {pt.barangay} • {pt.source_type}
                               </div>
-                              <div className="shrink-0">{renderStatusPill(pt.wvi_score)}</div>
                             </div>
-
-                            <div className="mt-2 flex items-center justify-between text-[11px]">
-                              <span className="text-[#01658E]">
-                                Status: <strong className="text-[#033F56]">{pt.status}</strong>
-                              </span>
-                              <span className="font-bold text-[#01658E] flex items-center gap-1">
-                                <Navigation className="w-3 h-3 text-[#00B3CD]" /> Focus on 3D Map
-                              </span>
-                            </div>
+                            <div className="shrink-0">{renderStatusPill(pt.wvi_score)}</div>
                           </div>
-                        );
-                      })
-                    )}
+                        </div>
+                      );
+                    })}
                   </div>
 
-                  {/* Integrated Community Incident Report Footer */}
-                  <div className="p-3 border-t border-[#91EFF7] bg-[#F3FBFD]">
+                  <div className="p-3 bg-slate-50 border-t border-slate-200 space-y-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      Submitted Community Reports ({incidentReports.length})
+                    </div>
+                    <div className="max-h-24 overflow-y-auto space-y-1.5">
+                      {incidentReports.map((rep) => (
+                        <div
+                          key={rep.id}
+                          className="p-2 rounded-lg bg-white border border-slate-200 text-[11px] flex items-center justify-between gap-2"
+                        >
+                          <div className="truncate">
+                            <span className="font-bold text-slate-800">Brgy. {rep.barangay}:</span>{' '}
+                            <span className="text-slate-600">{rep.issue_type}</span>
+                          </div>
+                          <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-bold text-[9.5px] shrink-0">
+                            {rep.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
                     <button
                       type="button"
                       onClick={() => setReportModalOpen(true)}
-                      className="w-full py-2 px-3 rounded-lg bg-[#033F56] hover:bg-[#01658E] text-[#FDFDFD] text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                      className="w-full py-2 px-3 rounded-lg bg-[#0284C7] hover:bg-[#0369A1] text-white text-xs font-semibold flex items-center justify-center gap-2 transition-colors"
                     >
-                      <Megaphone className="w-3.5 h-3.5 text-[#FE9659]" />
-                      Report Broken Pump or Muddy Water
+                      <Megaphone className="w-3.5 h-3.5" />
+                      Submit Community Water Issue
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* 4. BHW FIELD INSPECTOR FLOATING FORM DRAWER */}
-              {activeRole === 'BHW' && (
-                <div className="bg-[#FDFDFD]/95 backdrop-blur-md border border-[#91EFF7] rounded-xl shadow-lg w-full sm:w-[375px] max-h-[calc(100vh-8.5rem)] overflow-y-auto p-4 space-y-4">
-                  <div className="flex items-center justify-between border-b border-[#91EFF7] pb-3">
+              {/* LGU FIELD INSPECTION FORM */}
+              {!validationMode && activeWorkspace === 'BHW' && canAccessLGU && (
+                <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl shadow-md w-full sm:w-[380px] max-h-[calc(100vh-8.5rem)] overflow-y-auto p-4 space-y-3.5">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
                     <div>
-                      <h2 className="text-sm font-extrabold text-[#033F56]">
-                        BHW Field Inspection Kit
+                      <h2 className="text-sm font-extrabold text-slate-900">
+                        LGU Water Quality Field Log
                       </h2>
-                      <p className="text-[11px] text-[#01658E]">
-                        Tap any 3D facility on the map or select below
+                      <p className="text-[11px] text-slate-500">
+                        Updates station WVI & marks Verified Field Inspection
                       </p>
                     </div>
-                    {queue.length > 0 && (
-                      <button
-                        type="button"
-                        disabled={!isOnline || isSyncing}
-                        onClick={() => syncLogsToServer(queue)}
-                        className="px-2.5 py-1 rounded-md bg-[#FD7132] text-[#FDFDFD] text-xs font-extrabold disabled:opacity-40 flex items-center gap-1"
-                      >
-                        <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
-                        Sync ({queue.length})
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSimulatedOffline(!simulatedOffline)}
+                      className={`px-2 py-1 rounded text-[10px] font-bold border ${
+                        isOnline
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
+                      }`}
+                    >
+                      {isOnline ? 'Online' : `Offline (${queue.length})`}
+                    </button>
                   </div>
 
                   <form onSubmit={handleLogSubmit} className="space-y-3 text-xs">
-                    <div className="relative">
-                      <label className="block font-bold text-[#01658E] mb-1">
+                    <div>
+                      <label className="block font-semibold text-slate-600 mb-1">
                         Water Facility
                       </label>
                       <select
@@ -644,7 +770,7 @@ export default function App() {
                           const found = waterPoints.find((p) => p.id === e.target.value);
                           if (found) setActiveMapNode(found);
                         }}
-                        className="w-full appearance-none bg-[#F3FBFD] border border-[#91EFF7] rounded-lg pl-3 pr-8 py-2 font-bold text-[#033F56] outline-none focus:border-[#01658E]"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 font-semibold text-slate-800 outline-none focus:border-[#0284C7]"
                       >
                         {waterPoints.map((pt) => (
                           <option key={pt.id} value={pt.id}>
@@ -652,112 +778,197 @@ export default function App() {
                           </option>
                         ))}
                       </select>
-                      <ChevronDown className="w-3.5 h-3.5 text-[#01658E] absolute right-2.5 top-[30px] pointer-events-none" />
                     </div>
 
                     <div className="grid grid-cols-2 gap-2.5">
-                      <div className="relative">
-                        <label className="block font-bold text-[#01658E] mb-1">
+                      <div>
+                        <label className="block font-semibold text-slate-600 mb-1">
                           Hardware Status
                         </label>
                         <select
                           value={pumpStatus}
                           onChange={(e) => setPumpStatus(e.target.value)}
-                          className="w-full appearance-none bg-[#F3FBFD] border border-[#91EFF7] rounded-lg pl-2.5 pr-7 py-2 font-bold text-[#033F56] outline-none"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 font-semibold text-slate-800 outline-none"
                         >
                           <option value="Functional">Functional</option>
                           <option value="Under Repair">Under Repair</option>
                           <option value="Abandoned">Abandoned</option>
                         </select>
-                        <ChevronDown className="w-3.5 h-3.5 text-[#01658E] absolute right-2 top-[30px] pointer-events-none" />
                       </div>
                       <div>
-                        <label className="block font-bold text-[#01658E] mb-1">Inspector</label>
+                        <label className="block font-semibold text-slate-600 mb-1">Field Unit ID</label>
                         <input
                           type="text"
-                          value={bhwName}
-                          onChange={(e) => setBhwName(e.target.value)}
-                          className="w-full bg-[#F3FBFD] border border-[#91EFF7] rounded-lg px-2.5 py-2 font-bold text-[#033F56] outline-none"
+                          value={inspectorUnit}
+                          onChange={(e) => setInspectorUnit(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 font-semibold text-slate-800 outline-none"
                         />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-2">
                       <div>
-                        <label className="block font-bold text-[#01658E] mb-1">pH</label>
+                        <label className="block font-semibold text-slate-600 mb-1">pH</label>
                         <input
                           type="number"
                           step="0.1"
                           value={ph}
                           onChange={(e) => setPh(e.target.value)}
-                          className="w-full bg-[#F3FBFD] border border-[#91EFF7] rounded-lg px-2.5 py-1.5 font-bold text-[#033F56]"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-semibold text-slate-800"
                         />
                       </div>
                       <div>
-                        <label className="block font-bold text-[#01658E] mb-1">TDS (ppm)</label>
+                        <label className="block font-semibold text-slate-600 mb-1">TDS (ppm)</label>
                         <input
                           type="number"
                           value={tdsPpm}
                           onChange={(e) => setTdsPpm(e.target.value)}
-                          className="w-full bg-[#F3FBFD] border border-[#91EFF7] rounded-lg px-2.5 py-1.5 font-bold text-[#033F56]"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-semibold text-slate-800"
                         />
                       </div>
                       <div>
-                        <label className="block font-bold text-[#01658E] mb-1">Turbidity</label>
+                        <label className="block font-semibold text-slate-600 mb-1">Turbidity</label>
                         <input
                           type="number"
                           step="0.1"
                           value={turbidityNtu}
                           onChange={(e) => setTurbidityNtu(e.target.value)}
-                          className="w-full bg-[#F3FBFD] border border-[#91EFF7] rounded-lg px-2.5 py-1.5 font-bold text-[#033F56]"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-semibold text-slate-800"
                         />
                       </div>
                     </div>
 
                     <div>
-                      <label className="block font-bold text-[#01658E] mb-1">
+                      <label className="block font-semibold text-slate-600 mb-1">
                         Field Observation Note
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g., Floodwater near apron"
+                        placeholder="e.g., Residual chlorine verified at 0.4 mg/L"
                         value={incidentNote}
                         onChange={(e) => setIncidentNote(e.target.value)}
-                        className="w-full bg-[#F3FBFD] border border-[#91EFF7] rounded-lg px-2.5 py-1.5 text-[#033F56]"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-800"
                       />
                     </div>
 
-                    <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-[#FD7132]/10 border border-[#FD7132]/35 cursor-pointer">
+                    <label className="flex items-center gap-2.5 p-2.5 rounded-lg bg-red-50 border border-red-200 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={coliformPresent}
                         onChange={(e) => setColiformPresent(e.target.checked)}
-                        className="w-4 h-4 accent-[#FD7132]"
+                        className="w-4 h-4 accent-red-600"
                       />
-                      <span className="font-bold text-[#FD7132]">
-                        Positive Coliform Strip (+25 WVI)
+                      <span className="font-bold text-red-700">
+                        Positive Coliform Indicator (+35 WVI)
                       </span>
                     </label>
 
                     <button
                       type="submit"
                       disabled={isSyncing}
-                      className="w-full py-2.5 rounded-lg font-bold bg-[#033F56] hover:bg-[#01658E] text-[#FDFDFD] transition-colors"
+                      className="w-full py-2.5 rounded-lg font-semibold bg-[#0284C7] hover:bg-[#0369A1] text-white transition-colors"
                     >
-                      {isOnline ? 'Submit & Update 3D Map' : 'Queue Inspection Offline'}
+                      {isOnline ? 'Submit Inspection & Update Map' : 'Save Inspection Offline'}
                     </button>
                   </form>
                 </div>
               )}
+
+              {/* ADMINISTRATOR GOVERNANCE CONSOLE */}
+              {!validationMode && activeWorkspace === 'ADMIN' && isAdmin && (
+                <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl shadow-md w-full sm:w-[440px] max-h-[calc(100vh-8.5rem)] overflow-y-auto p-4 space-y-4">
+                  <div className="border-b border-slate-200 pb-2.5 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-sm font-extrabold text-slate-900">
+                        Administrator Governance Console
+                      </h2>
+                      <p className="text-[11px] text-slate-500">
+                        Role access structure, report triage & system audit log
+                      </p>
+                    </div>
+                    <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-bold">
+                      ADMIN
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Role Access Policies
+                    </div>
+                    <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden text-xs">
+                      {ROLE_DEFINITIONS.map((r) => (
+                        <div key={r.role} className="p-2.5 bg-white flex items-center justify-between">
+                          <div>
+                            <div className="font-bold text-slate-800">{r.label}</div>
+                            <div className="text-[10px] text-slate-500">{r.organization}</div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold text-[10px]">
+                            {r.permissions.length} Permissions
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Community Incident Report Moderation
+                    </div>
+                    <div className="space-y-2">
+                      {incidentReports.map((rep) => (
+                        <div key={rep.id} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-800">
+                              {rep.id} • Brgy. {rep.barangay}
+                            </span>
+                            <span className="text-[10px] font-bold text-[#0284C7]">{rep.status}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-600">{rep.description}</p>
+                          <div className="flex gap-1.5 pt-1">
+                            {['Under LGU Review', 'Tanker Dispatched', 'Resolved'].map((st) => (
+                              <button
+                                key={st}
+                                type="button"
+                                onClick={() => handleUpdateReportStatus(rep.id, st)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${
+                                  rep.status === st
+                                    ? 'bg-[#0284C7] text-white border-[#0284C7]'
+                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                {st}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      System Activity Log
+                    </div>
+                    <div className="max-h-28 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-lg bg-slate-50 text-[11px]">
+                      {auditLogs.map((log) => (
+                        <div key={log.id} className="px-2.5 py-1.5">
+                          <span className="font-bold text-slate-700">[{log.time}] {log.actor}:</span>{' '}
+                          <span className="text-slate-600">{log.action}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* TOP-RIGHT HUD: Vertical Camera/Layer Pill Toolbar + Contextual Object Inspector */}
+            {/* TOP-RIGHT HUD: Camera/Layer Controls + Selected Facility Inspector */}
             <div className="pointer-events-auto flex items-start gap-2.5">
-              <div className="bg-[#FDFDFD]/95 backdrop-blur-md border border-[#91EFF7] rounded-xl p-1.5 shadow-sm flex flex-col gap-1">
+              <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl p-1.5 shadow-sm flex flex-col gap-1">
                 <button
                   type="button"
                   onClick={() => setCameraCommand({ action: 'ZOOM_IN', ts: Date.now() })}
-                  className="p-2 rounded-lg hover:bg-[#F3FBFD] text-[#033F56]"
+                  className="p-2 rounded-lg hover:bg-slate-100 text-slate-700"
                   title="Zoom In"
                 >
                   <Plus className="w-4 h-4" />
@@ -765,7 +976,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setCameraCommand({ action: 'ZOOM_OUT', ts: Date.now() })}
-                  className="p-2 rounded-lg hover:bg-[#F3FBFD] text-[#033F56]"
+                  className="p-2 rounded-lg hover:bg-slate-100 text-slate-700"
                   title="Zoom Out"
                 >
                   <Minus className="w-4 h-4" />
@@ -773,20 +984,33 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
+                    setValidationMode(false);
                     setActiveMapNode(null);
                     setCameraCommand({ action: 'RESET', ts: Date.now() });
                   }}
-                  className="p-2 rounded-lg hover:bg-[#F3FBFD] text-[#033F56]"
-                  title="Reset 3D Camera"
+                  className="p-2 rounded-lg hover:bg-slate-100 text-slate-700"
+                  title="Reset Urban Core Camera"
                 >
                   <RotateCcw className="w-4 h-4" />
                 </button>
-                <div className="h-px bg-[#91EFF7] my-0.5" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setValidationMode(false);
+                    setActiveMapNode(null);
+                    setCameraCommand({ action: 'OVERVIEW', ts: Date.now() });
+                  }}
+                  className="p-2 rounded-lg hover:bg-slate-100 text-slate-700"
+                  title="Full 27-Barangay Overview"
+                >
+                  <Globe className="w-4 h-4" />
+                </button>
+                <div className="h-px bg-slate-200 my-0.5" />
                 <button
                   type="button"
                   onClick={() => setShowFloodLayer(!showFloodLayer)}
                   className={`p-2 rounded-lg transition-colors ${
-                    showFloodLayer ? 'bg-[#033F56] text-[#2ED5E5]' : 'hover:bg-[#F3FBFD] text-[#01658E]'
+                    showFloodLayer ? 'bg-[#0284C7] text-white' : 'hover:bg-slate-100 text-slate-500'
                   }`}
                   title="Toggle Flood Susceptibility Layer"
                 >
@@ -796,34 +1020,37 @@ export default function App() {
                   type="button"
                   onClick={() => setShowTankerRoutes(!showTankerRoutes)}
                   className={`p-2 rounded-lg transition-colors ${
-                    showTankerRoutes ? 'bg-[#01658E] text-[#FDFDFD]' : 'hover:bg-[#F3FBFD] text-[#01658E]'
+                    showTankerRoutes ? 'bg-[#0284C7] text-white' : 'hover:bg-slate-100 text-slate-500'
                   }`}
-                  title="Toggle CDRRMO Tanker Corridors"
+                  title="Toggle Tanker Dispatch Corridors"
                 >
                   <Truck className="w-4 h-4" />
                 </button>
               </div>
 
-              {/* Contextual Selected Facility Inspector Card */}
-              {activeMapNode && (
-                <div className="bg-[#FDFDFD]/95 backdrop-blur-md border border-[#91EFF7] rounded-xl p-4 shadow-lg w-72 sm:w-80 space-y-3">
+              {activeMapNode && !validationMode && (
+                <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl p-4 shadow-lg w-76 sm:w-80 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <div className="text-[10px] font-extrabold uppercase tracking-wider text-[#01658E]">
-                        {activeMapNode.id} • {activeMapNode.source_type}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#0284C7]">
+                          {activeMapNode.id} • {activeMapNode.source_type}
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[9px] font-semibold">
+                          {activeMapNode.data_provenance}
+                        </span>
                       </div>
-                      <h3 className="text-sm font-extrabold text-[#033F56] leading-snug mt-0.5">
+                      <h3 className="text-sm font-extrabold text-slate-900 leading-snug mt-0.5">
                         {activeMapNode.name}
                       </h3>
-                      <p className="text-xs text-[#01658E]">
-                        Brgy. {activeMapNode.barangay} ({activeMapNode.elevation_m}m ASL)
+                      <p className="text-xs text-slate-500">
+                        Brgy. {activeMapNode.barangay} • {activeMapNode.population_served} residents
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => setActiveMapNode(null)}
-                      className="p-1 rounded-lg hover:bg-[#F3FBFD] text-[#01658E]"
-                      title="Close Inspector"
+                      className="p-1 rounded-lg hover:bg-slate-100 text-slate-400"
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -832,98 +1059,74 @@ export default function App() {
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       {renderStatusPill(activeMapNode.wvi_score)}
-                      <span className="text-xs font-bold text-[#033F56]">
+                      <span className="text-xs font-bold text-slate-700">
                         WVI {activeMapNode.wvi_score} / 100
                       </span>
                     </div>
-                    <div className="w-full h-2 bg-[#91EFF7]/40 rounded-full overflow-hidden">
+                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all"
                         style={{
                           width: `${Math.min(100, activeMapNode.wvi_score)}%`,
                           backgroundColor:
                             activeMapNode.wvi_score >= 65
-                              ? '#EF4444'
+                              ? '#DC2626'
                               : activeMapNode.wvi_score >= 35
-                              ? '#F59E0B'
-                              : '#10B981',
+                              ? '#D97706'
+                              : '#059669',
                         }}
                       />
                     </div>
                   </div>
 
-                  <div className="divide-y divide-[#91EFF7] text-xs border-t border-[#91EFF7] pt-1">
+                  <div className="divide-y divide-slate-100 text-xs border-t border-slate-100 pt-1">
                     <div className="py-1.5 flex justify-between">
-                      <span className="text-[#01658E]">Hardware Condition</span>
-                      <span className="font-bold text-[#033F56]">{activeMapNode.status}</span>
+                      <span className="text-slate-500">Hardware Status</span>
+                      <span className="font-semibold text-slate-800">{activeMapNode.status}</span>
                     </div>
                     <div className="py-1.5 flex justify-between">
-                      <span className="text-[#01658E]">Coliform Bacteria</span>
+                      <span className="text-slate-500">Coliform Bacteria</span>
                       <span
-                        className={`font-bold ${
-                          activeMapNode.metrics.coliform_present
-                            ? 'text-[#FD7132]'
-                            : 'text-emerald-700'
+                        className={`font-semibold ${
+                          activeMapNode.metrics.coliform_present ? 'text-red-600' : 'text-emerald-700'
                         }`}
                       >
                         {activeMapNode.metrics.coliform_present ? 'Positive (Hazard)' : 'Negative'}
                       </span>
                     </div>
                     <div className="py-1.5 flex justify-between">
-                      <span className="text-[#01658E]">pH / TDS / Turbidity</span>
-                      <span className="font-bold text-[#033F56]">
+                      <span className="text-slate-500">pH / TDS / Turbidity</span>
+                      <span className="font-semibold text-slate-800">
                         {activeMapNode.metrics.ph} / {activeMapNode.metrics.tds_ppm}ppm /{' '}
                         {activeMapNode.metrics.turbidity_ntu}NTU
                       </span>
                     </div>
-                    <div className="py-1.5 flex justify-between">
-                      <span className="text-[#01658E]">Flood Exposure / Pop.</span>
-                      <span className="font-bold text-[#033F56]">
-                        Tier {activeMapNode.flood_risk_level}/5 • {activeMapNode.population_served}{' '}
-                        res.
-                      </span>
-                    </div>
                   </div>
 
-                  {/* Role-aware Contextual Footer Action inside Inspector */}
                   <div className="pt-1 flex gap-2">
-                    {activeRole === 'RESIDENT' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResidentReportBarangay(activeMapNode.barangay);
+                        setReportModalOpen(true);
+                      }}
+                      className="flex-1 py-1.5 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold flex items-center justify-center gap-1"
+                    >
+                      <Megaphone className="w-3.5 h-3.5 text-[#0284C7]" />
+                      Report Issue
+                    </button>
+
+                    {canAccessLGU && (
                       <button
                         type="button"
                         onClick={() => {
-                          setResidentReportBarangay(activeMapNode.barangay);
-                          setReportModalOpen(true);
+                          setSelectedPointId(activeMapNode.id);
+                          setActiveWorkspace('BHW');
                         }}
-                        className="flex-1 py-1.5 px-3 rounded-lg bg-[#033F56] text-[#FDFDFD] text-xs font-bold flex items-center justify-center gap-1.5"
+                        className="flex-1 py-1.5 px-2.5 rounded-lg bg-[#0284C7] hover:bg-[#0369A1] text-white text-xs font-semibold"
                       >
-                        <Megaphone className="w-3.5 h-3.5 text-[#FE9659]" />
-                        Report Issue at This Station
+                        Log Inspection
                       </button>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedPointId(activeMapNode.id);
-                            setActiveRole('BHW');
-                          }}
-                          className="flex-1 py-1.5 px-3 rounded-lg bg-[#F3FBFD] hover:bg-[#91EFF7]/35 border border-[#91EFF7] text-xs font-bold text-[#033F56]"
-                        >
-                          Log Field Test
-                        </button>
-                        {activeMapNode.wvi_score >= 65 && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowTankerRoutes(true);
-                              setActiveRole('CDRRMO');
-                            }}
-                            className="flex-1 py-1.5 px-3 rounded-lg bg-[#FD7132] text-[#FDFDFD] text-xs font-bold"
-                          >
-                            Track Tanker
-                          </button>
-                        )}
-                      </>
                     )}
                   </div>
                 </div>
@@ -933,85 +1136,35 @@ export default function App() {
 
           {/* BOTTOM ROW */}
           <div className="flex flex-col lg:flex-row items-stretch lg:items-end justify-between gap-4">
-            {/* BOTTOM-LEFT HUD: CDRRMO Tanker Stepper + Compact GIS Symbology Pill */}
-            <div className="pointer-events-auto flex flex-col gap-2.5">
-              {activeRole === 'CDRRMO' && criticalPoints.length > 0 && (
-                <div className="bg-[#FDFDFD]/95 backdrop-blur-md border border-[#91EFF7] rounded-xl p-4 shadow-md max-w-xl">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2 text-xs font-extrabold text-[#033F56]">
-                      <Truck className="w-4 h-4 text-[#FD7132]" />
-                      <span>
-                        Emergency Water Tanker Dispatch •{' '}
-                        {(activeMapNode?.wvi_score >= 65 ? activeMapNode : criticalPoints[0]).name}
-                      </span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded bg-[#FD7132]/15 text-[#FD7132] text-[10px] font-extrabold">
-                      EN ROUTE
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-5 gap-1 text-[10px]">
-                    {[
-                      { step: 'Coliform Flag', time: '14:30', done: true },
-                      { step: 'WVI >= 65', time: '14:32', done: true },
-                      { step: 'Tanker Loaded', time: '14:45', done: true },
-                      { step: 'In Transit', time: 'Active', done: true },
-                      { step: 'Rationing', time: 'ETA 12m', done: false },
-                    ].map((item, idx) => (
-                      <div key={item.step} className="flex flex-col items-center text-center">
-                        <div className="flex items-center w-full">
-                          <div
-                            className={`h-0.5 flex-1 ${
-                              idx === 0 ? 'bg-transparent' : item.done ? 'bg-[#033F56]' : 'bg-[#91EFF7]'
-                            }`}
-                          />
-                          <div
-                            className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${
-                              item.done
-                                ? 'bg-[#033F56] text-[#FE9659]'
-                                : 'bg-[#91EFF7]/40 text-[#01658E]'
-                            }`}
-                          >
-                            {item.done ? '✓' : idx + 1}
-                          </div>
-                          <div
-                            className={`h-0.5 flex-1 ${
-                              idx === 4 ? 'bg-transparent' : item.done ? 'bg-[#033F56]' : 'bg-[#91EFF7]'
-                            }`}
-                          />
-                        </div>
-                        <span className="font-bold text-[#033F56] mt-1">{item.step}</span>
-                        <span className="text-[#01658E]">{item.time}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Always-Visible Compact GIS Symbology Pill */}
-              <div className="bg-[#FDFDFD]/90 backdrop-blur-md border border-[#91EFF7] rounded-lg px-3 py-1.5 shadow-xs inline-flex items-center gap-4 text-[11px] font-bold text-[#033F56] self-start">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]" /> Safe (&lt;35)
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]" /> Moderate (35–64)
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#EF4444]" /> Critical (&ge;65)
-                </span>
-              </div>
+            <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-slate-200 rounded-lg px-3.5 py-2 shadow-2xs flex flex-wrap items-center gap-4 text-[11px] font-semibold text-slate-700 self-start">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                WVI Symbology:
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" /> Safe (Under 35)
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Advisory (35–64)
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-600" /> Critical (65+)
+              </span>
+              <span className="hidden sm:inline text-slate-300">|</span>
+              <span className="hidden sm:flex items-center gap-1 text-[10px] text-slate-500">
+                <Info className="w-3 h-3 text-[#0284C7]" />
+                OSM Landmarks + Representative Urban Blocks • Baseline telemetry simulated unless marked Verified
+              </span>
             </div>
 
-            {/* BOTTOM-RIGHT HUD: Contextual Operations & Triage Dock (Only for LGU & CDRRMO) */}
-            {(activeRole === 'LGU' || activeRole === 'CDRRMO') && (
-              <div className="pointer-events-auto bg-[#FDFDFD]/95 backdrop-blur-md border border-[#91EFF7] rounded-xl shadow-lg w-full lg:w-[400px] overflow-hidden">
-                <div className="px-3.5 py-2.5 border-b border-[#91EFF7] flex items-center justify-between">
+            {!validationMode && activeWorkspace === 'LGU' && canAccessLGU && (
+              <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl shadow-md w-full lg:w-[400px] overflow-hidden">
+                <div className="px-3.5 py-2.5 border-b border-slate-200 flex items-center justify-between">
                   <div className="flex items-center gap-1">
                     {[
                       { id: 'ALL', label: `All (${filteredPoints.length})` },
                       { id: 'SAFE', label: `Safe (${safePoints.length})` },
-                      { id: 'MODERATE', label: `Mod (${moderatePoints.length})` },
-                      { id: 'CRITICAL', label: `Crit (${criticalPoints.length})` },
+                      { id: 'MODERATE', label: `Advisory (${moderatePoints.length})` },
+                      { id: 'CRITICAL', label: `Critical (${criticalPoints.length})` },
                     ].map((tab) => (
                       <button
                         key={tab.id}
@@ -1020,55 +1173,48 @@ export default function App() {
                           setDockTab(tab.id);
                           setDockCollapsed(false);
                         }}
-                        className={`px-2 py-1 rounded-md text-[11px] font-bold transition-colors ${
+                        className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-colors ${
                           dockTab === tab.id
-                            ? 'bg-[#033F56] text-[#FDFDFD]'
-                            : 'text-[#01658E] hover:bg-[#F3FBFD]'
+                            ? 'bg-[#0284C7] text-white'
+                            : 'text-slate-600 hover:bg-slate-100'
                         }`}
                       >
                         {tab.label}
                       </button>
                     ))}
                   </div>
-
                   <button
                     type="button"
                     onClick={() => setDockCollapsed(!dockCollapsed)}
-                    className="text-xs font-bold text-[#01658E] hover:text-[#033F56] px-1.5"
+                    className="text-xs font-semibold text-slate-500 hover:text-slate-800 px-1.5"
                   >
                     {dockCollapsed ? 'Expand ▲' : 'Minimize ▼'}
                   </button>
                 </div>
 
                 {!dockCollapsed && (
-                  <div className="max-h-48 overflow-y-auto divide-y divide-[#91EFF7]">
-                    {opsDockPoints.map((pt) => {
-                      const isSelected = activeMapNode?.id === pt.id;
-                      return (
-                        <div
-                          key={pt.id}
-                          onClick={() => setActiveMapNode(pt)}
-                          className={`px-3.5 py-2.5 flex items-center justify-between gap-2 cursor-pointer transition-colors text-xs ${
-                            isSelected ? 'bg-[#91EFF7]/30' : 'hover:bg-[#F3FBFD]'
-                          }`}
-                        >
-                          <div className="min-w-0">
-                            <div className="font-bold text-[#033F56] truncate">
-                              <span className="text-[#01658E] mr-1.5">{pt.id}</span>
-                              {pt.name}
-                            </div>
-                            <div className="text-[11px] text-[#01658E]">
-                              Brgy. {pt.barangay} • {pt.source_type} • Flood {pt.flood_risk_level}/5
-                            </div>
+                  <div className="max-h-44 overflow-y-auto divide-y divide-slate-100">
+                    {opsDockPoints.map((pt) => (
+                      <div
+                        key={pt.id}
+                        onClick={() => setActiveMapNode(pt)}
+                        className="px-3.5 py-2.5 flex items-center justify-between gap-2 cursor-pointer hover:bg-slate-50 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-800 truncate">
+                            <span className="text-[#0284C7] mr-1.5">{pt.id}</span>
+                            {pt.name}
                           </div>
-
-                          <div className="flex items-center gap-2 shrink-0">
-                            {renderStatusPill(pt.wvi_score)}
-                            <ChevronRight className="w-3.5 h-3.5 text-[#01658E]" />
+                          <div className="text-[11px] text-slate-500">
+                            Brgy. {pt.barangay} • {pt.source_type}
                           </div>
                         </div>
-                      );
-                    })}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {renderStatusPill(pt.wvi_score)}
+                          <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1076,18 +1222,84 @@ export default function App() {
           </div>
         </div>
 
-        {/* COMPACT RESIDENT INCIDENT REPORT MODAL */}
-        {reportModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#033F56]/40 backdrop-blur-xs p-4">
-            <div className="bg-[#FDFDFD] border border-[#91EFF7] rounded-xl shadow-xl max-w-md w-full p-5 space-y-4">
+        {/* ROLE AUTHENTICATION MODAL (Enforces Credential Check on Role Selection) */}
+        {pendingRoleTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+            <form
+              onSubmit={handleAuthenticateSubmit}
+              className="bg-white border border-slate-200 rounded-xl shadow-xl max-w-md w-full p-5 space-y-4"
+            >
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-extrabold text-[#033F56]">
-                  Report Community Water Issue
+                <div className="flex items-center gap-2">
+                  <span className="p-2 rounded-lg bg-sky-50 text-[#0284C7]">
+                    <Lock className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-extrabold text-slate-900">
+                      Authenticate as {pendingRoleTarget.label}
+                    </h3>
+                    <p className="text-[11px] text-slate-500">{pendingRoleTarget.organization}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPendingRoleTarget(null)}
+                  className="text-slate-400 hover:text-slate-700"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-600">{pendingRoleTarget.description}</p>
+
+              <div className="space-y-1.5 text-xs">
+                <label className="block font-semibold text-slate-700">
+                  Role Access Credential Code
+                </label>
+                <input
+                  type="text"
+                  value={accessCodeInput}
+                  onChange={(e) => setAccessCodeInput(e.target.value)}
+                  placeholder="Enter access credential..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 font-mono font-bold text-slate-900 outline-none focus:border-[#0284C7]"
+                />
+                <div className="text-[11px] text-slate-500">
+                  Demo evaluation credential: <strong className="font-mono text-slate-800">{pendingRoleTarget.defaultCode}</strong>
+                </div>
+                {authError && <p className="text-xs font-semibold text-red-600">{authError}</p>}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setPendingRoleTarget(null)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg bg-[#0284C7] hover:bg-[#0369A1] text-white text-xs font-semibold"
+                >
+                  Verify & Sign In
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* COMMUNITY INCIDENT REPORT MODAL */}
+        {reportModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+            <div className="bg-white border border-slate-200 rounded-xl shadow-xl max-w-md w-full p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-extrabold text-slate-900">
+                  Submit Community Water Issue
                 </h3>
                 <button
                   type="button"
                   onClick={() => setReportModalOpen(false)}
-                  className="text-[#01658E] hover:text-[#033F56]"
+                  className="text-slate-400 hover:text-slate-700"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1095,11 +1307,11 @@ export default function App() {
 
               <div className="space-y-3 text-xs">
                 <div>
-                  <label className="block font-bold text-[#01658E] mb-1">Barangay</label>
+                  <label className="block font-semibold text-slate-600 mb-1">Barangay</label>
                   <select
                     value={residentReportBarangay}
                     onChange={(e) => setResidentReportBarangay(e.target.value)}
-                    className="w-full bg-[#F3FBFD] border border-[#91EFF7] rounded-lg px-3 py-2 font-bold text-[#033F56]"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 font-semibold text-slate-800"
                   >
                     {[...new Set(waterPoints.map((p) => p.barangay))].map((brgy) => (
                       <option key={brgy} value={brgy}>
@@ -1110,15 +1322,29 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="block font-bold text-[#01658E] mb-1">
-                    Issue Description (Broken pump, muddy runoff, odor)
+                  <label className="block font-semibold text-slate-600 mb-1">Issue Category</label>
+                  <select
+                    value={residentReportIssueType}
+                    onChange={(e) => setResidentReportIssueType(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 font-semibold text-slate-800"
+                  >
+                    <option value="Turbid / Discolored Water">Turbid / Discolored Water</option>
+                    <option value="Broken Handpump Lever / Valve">Broken Handpump Lever / Valve</option>
+                    <option value="Foul Odor or Taste">Foul Odor or Taste</option>
+                    <option value="Floodwater Submersion">Floodwater Submersion</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-600 mb-1">
+                    Observation Details
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g., Handpump lever broken near zone chapel"
+                    placeholder="Describe water condition or pump issue..."
                     value={residentReportNote}
                     onChange={(e) => setResidentReportNote(e.target.value)}
-                    className="w-full bg-[#F3FBFD] border border-[#91EFF7] rounded-lg px-3 py-2 font-semibold text-[#033F56]"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 font-medium text-slate-800"
                   />
                 </div>
               </div>
@@ -1127,22 +1353,30 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setReportModalOpen(false)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-[#01658E] hover:bg-[#F3FBFD]"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-500 hover:bg-slate-100"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    const targetBrgy = residentReportBarangay;
+                    const newRep = {
+                      id: `REP-2026-0${incidentReports.length + 1}`,
+                      point_id: activeMapNode?.id || 'NAGA-02',
+                      barangay: residentReportBarangay,
+                      reporter_role: activeRoleObj.label,
+                      issue_type: residentReportIssueType,
+                      description: residentReportNote || residentReportIssueType,
+                      status: 'Pending LGU Review',
+                      submitted_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    };
+                    setIncidentReports((prev) => [newRep, ...prev]);
+                    appendAuditLog(activeRoleObj.label, `Submitted community report ${newRep.id} in Brgy. ${residentReportBarangay}`);
                     setResidentReportNote('');
                     setReportModalOpen(false);
-                    triggerStatusMessage(
-                      'success',
-                      `Community report in Brgy. ${targetBrgy} logged for BHW verification.`
-                    );
+                    triggerStatusMessage('success', `Report ${newRep.id} submitted for Brgy. ${residentReportBarangay}.`);
                   }}
-                  className="px-4 py-1.5 rounded-lg bg-[#033F56] text-[#FDFDFD] text-xs font-bold"
+                  className="px-4 py-1.5 rounded-lg bg-[#0284C7] hover:bg-[#0369A1] text-white text-xs font-semibold"
                 >
                   Submit Report
                 </button>

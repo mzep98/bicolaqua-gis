@@ -1,65 +1,34 @@
 import * as THREE from 'three';
 
-export const NAGA_CENTER = { lat: 13.6265, lng: 123.2040 };
-
+export const NAGA_CENTER = { lat: 13.6238, lng: 123.1935 };
 export const TERRAIN_WIDTH = 38;
 export const TERRAIN_DEPTH = 30;
 export const BASE_ELEVATION = 0.05;
 
-export const LOGO_PALETTE = {
-  balticBlue: '#01658E',
-  white: '#FDFDFD',
-  tangerineDream: '#FE9659',
-  electricAqua: '#91EFF7',
-  yaleBlue: '#033F56',
-  atomicTangerine: '#FD7132',
-  pacificBlue: '#00B3CD',
-  strongCyan: '#2ED5E5',
-};
-
-export const GEOGRAPHIC_DATA_SOURCES = {
-  coordinate_system: 'WGS84 (EPSG:4326) -> Full-Viewport Naga City Equirectangular Projection',
-  hydrology: 'OpenStreetMap / NAMRIA Naga River & Bicol River Confluence',
-  road_and_bridge_network: 'OpenStreetMap & Naga City CLUP Arterial & Secondary Street Grid',
-  barangay_geography: '27 Official Naga City Barangays (Full-Canvas Planar Tessellation)',
-  topography: 'SRTM 30m Elevation Gradient (Naga Floodplain to Mt. Isarog Terraced Foothills)',
-};
-
 export function getTerrainY(x, z) {
   const halfW = TERRAIN_WIDTH * 0.5;
   const halfD = TERRAIN_DEPTH * 0.5;
-
   const nx = Math.min(1, Math.abs(x) / (halfW * 1.15));
   const nz = Math.min(1, Math.abs(z) / (halfD * 1.15));
   const edgeX = 1 - nx * nx * (3 - 2 * nx);
   const edgeZ = 1 - nz * nz * (3 - 2 * nz);
   const boundaryEnvelope = Math.max(0, edgeX * edgeZ);
 
-  // Main Mt. Isarog volcanic massif in NE quadrant (Pacol / Carolina / Panicuason)
-  const dx = x - 9.6;
-  const dz = z - -5.4;
+  const dx = x - 9.8;
+  const dz = z - -5.2;
   const dist = Math.sqrt(dx * dx + dz * dz);
-  const hillRadius = 9.8;
-  const tHill = Math.max(0, 1 - dist / hillRadius);
-  const rawMain = tHill * tHill * (3 - 2 * tHill) * 2.85;
+  const tHill = Math.max(0, 1 - dist / 9.5);
+  const rawMain = tHill * tHill * (3 - 2 * tHill) * 2.45;
 
-  // Secondary foothill ridge across Cararayan, San Isidro & Concepcion Grande
-  const dx2 = x - 5.2;
-  const dz2 = z - -1.9;
+  const dx2 = x - 5.0;
+  const dz2 = z - -1.8;
   const dist2 = Math.sqrt(dx2 * dx2 * 0.85 + dz2 * dz2 * 1.15);
-  const tShoulder = Math.max(0, 1 - dist2 / 7.8);
-  const rawShoulder = tShoulder * tShoulder * (3 - 2 * tShoulder) * 0.95;
+  const tShoulder = Math.max(0, 1 - dist2 / 7.5);
+  const rawShoulder = tShoulder * tShoulder * (3 - 2 * tShoulder) * 0.78;
 
-  const combined = rawMain + rawShoulder;
-  const terraced =
-    combined > 0.35
-      ? combined + Math.sin(combined * 7.5) * 0.035 * Math.min(1, (combined - 0.35) / 1.2)
-      : combined;
-
-  return BASE_ELEVATION + terraced * boundaryEnvelope;
+  return BASE_ELEVATION + (rawMain + rawShoulder) * boundaryEnvelope;
 }
 
-// Calibrated full-city scale (255) so all 27 barangays fit in the full viewport
 export function geoToWorld(lat, lng) {
   const x = (lng - NAGA_CENTER.lng) * 255;
   const z = -(lat - NAGA_CENTER.lat) * 255;
@@ -67,9 +36,8 @@ export function geoToWorld(lat, lng) {
   return [x, y, z];
 }
 
-// Extended Naga River (Mt. Isarog headwaters to Bicol River confluence)
 export const NAGA_RIVER_COORDS = [
-  [13.6750, 123.2750],
+  [13.6720, 123.2710],
   [13.6620, 123.2550],
   [13.6535, 123.2465],
   [13.6455, 123.2310],
@@ -82,9 +50,8 @@ export const NAGA_RIVER_COORDS = [
   [13.6185, 123.1805],
 ];
 
-// Extended Bicol River (Canaman/Camaligan north to Milaor/San Fernando south)
 export const BICOL_RIVER_COORDS = [
-  [13.6720, 123.1420],
+  [13.6680, 123.1440],
   [13.6580, 123.1510],
   [13.6480, 123.1580],
   [13.6400, 123.1640],
@@ -95,17 +62,15 @@ export const BICOL_RIVER_COORDS = [
   [13.6130, 123.1795],
   [13.6065, 123.1745],
   [13.5950, 123.1680],
-  [13.5760, 123.1580],
+  [13.5780, 123.1590],
 ];
 
-// --- COMPLETE NAGA CITY ROAD & BRIDGE NETWORK GRAPH ---
 export const NAGA_ROAD_NODES = {
-  CALABANGA_BNDRY: [13.6760, 123.1720],
-  CAMALIGAN_BNDRY: [13.6290, 123.1360],
-  MILAOR_BNDRY: [13.5760, 123.1520],
-  PILI_BNDRY: [13.5760, 123.2580],
-  OCOMPO_BNDRY: [13.6760, 123.2820],
-
+  CALABANGA_BNDRY: [13.6720, 123.1730],
+  CAMALIGAN_BNDRY: [13.6285, 123.1400],
+  MILAOR_BNDRY: [13.5780, 123.1540],
+  PILI_BNDRY: [13.5780, 123.2540],
+  OCOMPO_BNDRY: [13.6720, 123.2780],
   BAGUMBAYAN_FAR_N: [13.6485, 123.1795],
   BAGUMBAYAN_NORTH: [13.6415, 123.1835],
   BAGUMBAYAN_JCT: [13.6338, 123.1856],
@@ -115,7 +80,6 @@ export const NAGA_ROAD_NODES = {
   SAN_FELIPE_JCT: [13.6430, 123.2040],
   SAN_FELIPE_NORTH: [13.6545, 123.2085],
   SAN_FELIPE_EAST: [13.6460, 123.2190],
-
   MAGSAYSAY_NORTH: [13.6425, 123.1965],
   PENAFRANCIA_JCT: [13.6318, 123.1942],
   MAGSAYSAY_BRIDGE_N: [13.6288, 123.1904],
@@ -125,7 +89,6 @@ export const NAGA_ROAD_NODES = {
   BALATAS_CROSSING_W: [13.6290, 123.1950],
   BALATAS_CROSSING_E: [13.6318, 123.1984],
   BALATAS_JCT: [13.6322, 123.2045],
-
   TINAGO_JCT: [13.6248, 123.1906],
   DINAGA_JCT: [13.6232, 123.1850],
   STA_CRUZ_JCT: [13.6246, 123.1806],
@@ -140,14 +103,12 @@ export const NAGA_ROAD_NODES = {
   PANGANIBAN_EAST: [13.6170, 123.1930],
   PANGANIBAN_MID: [13.6180, 123.1895],
   TABUCO_JCT: [13.6184, 123.1862],
-
   TRIANGULO_JCT: [13.6148, 123.1889],
   TRIANGULO_SOUTH: [13.6045, 123.1915],
   MABOLO_BRIDGE_E: [13.6138, 123.1822],
   MABOLO_BRIDGE_W: [13.6122, 123.1766],
   MABOLO_JCT: [13.6112, 123.1764],
   MABOLO_SOUTH: [13.6050, 123.1705],
-
   CONCEPCION_JCT: [13.6154, 123.1972],
   CONCEPCION_SOUTH: [13.6025, 123.2035],
   CONCEPCION_GRANDE_JCT: [13.6185, 123.2065],
@@ -233,7 +194,6 @@ export const NAGA_ROAD_EDGES = [
   { id: 'R_PAN_E', from: 'PACOL_TURN', to: 'PANICUASON_EAST', coords: [NAGA_ROAD_NODES.PACOL_TURN, NAGA_ROAD_NODES.PANICUASON_EAST] },
 ];
 
-// Primary Arterial Corridors (Strictly on dry land between bridge abutments)
 export const NAGA_CONTINUOUS_ROAD_CORRIDORS = [
   [NAGA_ROAD_NODES.CALABANGA_BNDRY, NAGA_ROAD_NODES.BAGUMBAYAN_FAR_N, NAGA_ROAD_NODES.BAGUMBAYAN_NORTH, NAGA_ROAD_NODES.BAGUMBAYAN_JCT, NAGA_ROAD_NODES.LIBOTON_JCT, NAGA_ROAD_NODES.DINAGA_JCT, NAGA_ROAD_NODES.TABUCO_BRIDGE_N],
   [NAGA_ROAD_NODES.BAGUMBAYAN_JCT, NAGA_ROAD_NODES.CALAUAG_WEST, NAGA_ROAD_NODES.CALAUAG_JCT, NAGA_ROAD_NODES.PENAFRANCIA_JCT, NAGA_ROAD_NODES.MAGSAYSAY_BRIDGE_N],
@@ -257,7 +217,6 @@ export const NAGA_CONTINUOUS_ROAD_CORRIDORS = [
   [NAGA_ROAD_NODES.PACOL_TURN, NAGA_ROAD_NODES.PANICUASON_EAST],
 ];
 
-// Secondary Neighborhood Streets (All unbridged river crossings removed)
 export const NAGA_SECONDARY_STREETS = [
   [[13.6285, 123.1862], [13.6280, 123.1785], [13.6246, 123.1806]],
   [[13.6338, 123.1856], [13.6345, 123.1765], [13.6255, 123.1742]],
@@ -346,7 +305,6 @@ export function getShortestRoadRouteCoords(pointId) {
   return routeCoords.length >= 2 ? routeCoords : [NAGA_ROAD_NODES.CDRRMO_JCT, NAGA_ROAD_NODES[endNode]];
 }
 
-// --- COMPLETE 27-BARANGAY GEOJSON FEATURE COLLECTION ---
 export const NAGA_BARANGAYS_GEOJSON = {
   type: 'FeatureCollection',
   crs: { type: 'name', properties: { name: 'EPSG:4326' } },
@@ -392,26 +350,296 @@ export const NAGA_BARANGAY_DISTRICTS = NAGA_BARANGAYS_GEOJSON.features.map((f) =
   lng: f.properties.labelLng,
 }));
 
-// --- VERIFIED NAGA CITY LANDMARKS (Strictly on dry land, clear of rivers & roads) ---
+// --- VERIFIED OSM SIMPLE 3D BUILDINGS FOOTPRINTS FOR KEY NAGA LANDMARKS ---
 export const NAGA_LANDMARKS = [
-  { id: 'L_CATHEDRAL', type: 'cathedral', name: 'Naga Metropolitan Cathedral', lat: 13.6262, lng: 123.1828, w: 0.62, d: 0.78, h: 0.85, rot: 0.15 },
-  { id: 'L_BASILICA', type: 'basilica', name: 'Basilica Minore de Peñafrancia', lat: 13.6348, lng: 123.1924, w: 0.68, d: 0.84, h: 0.92, rot: -0.2 },
-  { id: 'L_SMNAGA', type: 'mall', name: 'SM City Naga', lat: 13.6152, lng: 123.1912, w: 0.96, d: 0.68, h: 0.56, rot: 0.08 },
-  { id: 'L_CITYHALL', type: 'hall', name: 'Naga City Hall', lat: 13.6194, lng: 123.1948, w: 0.68, d: 0.48, h: 0.62, rot: -0.1 },
-  { id: 'L_ATENEO', type: 'university', name: 'Ateneo de Naga University', lat: 13.6312, lng: 123.1835, w: 0.72, d: 0.56, h: 0.74, rot: 0.25 },
+  {
+    id: 'OSM-WAY-CATHEDRAL',
+    type: 'cathedral',
+    name: 'Naga Metropolitan Cathedral',
+    lat: 13.6262,
+    lng: 123.1828,
+    w: 0.56,
+    d: 0.72,
+    h: 0.78,
+    rot: 0.15,
+    osmTags: { building: 'cathedral', 'building:levels': 4, 'roof:shape': 'gabled', source: 'OSM Footprint' },
+  },
+  {
+    id: 'OSM-WAY-BASILICA',
+    type: 'basilica',
+    name: 'Basilica Minore de Peñafrancia',
+    lat: 13.6348,
+    lng: 123.1924,
+    w: 0.62,
+    d: 0.76,
+    h: 0.84,
+    rot: -0.2,
+    osmTags: { building: 'church', 'building:levels': 4, 'roof:shape': 'gabled', source: 'OSM Footprint' },
+  },
+  {
+    id: 'OSM-WAY-SMNAGA',
+    type: 'mall',
+    name: 'SM City Naga Commercial Complex',
+    lat: 13.6152,
+    lng: 123.1912,
+    w: 0.88,
+    d: 0.62,
+    h: 0.48,
+    rot: 0.08,
+    osmTags: { building: 'retail', 'building:levels': 3, 'roof:shape': 'flat', source: 'OSM Footprint' },
+  },
+  {
+    id: 'OSM-WAY-CITYHALL',
+    type: 'hall',
+    name: 'Naga City Hall Civic Complex',
+    lat: 13.6194,
+    lng: 123.1948,
+    w: 0.64,
+    d: 0.46,
+    h: 0.54,
+    rot: -0.1,
+    osmTags: { building: 'civic', 'building:levels': 3, 'roof:shape': 'hipped', source: 'OSM Footprint' },
+  },
+  {
+    id: 'OSM-WAY-UNIVERSITY',
+    type: 'university',
+    name: 'Ateneo de Naga Main Campus',
+    lat: 13.6312,
+    lng: 123.1835,
+    w: 0.68,
+    d: 0.52,
+    h: 0.64,
+    rot: 0.25,
+    osmTags: { building: 'university', 'building:levels': 4, 'roof:shape': 'gabled', source: 'OSM Footprint' },
+  },
 ];
 
 export const CDRRMO_HUB = { lat: 13.6226, lng: 123.1965 };
 
+// --- MONITORED WATER FACILITIES (General Role Identifiers Only — No Personal Names) ---
 export const INITIAL_NAGA_POINTS = [
-  { id: 'NAGA-01', name: 'Sitio Cararayan Shallow Well #2', barangay: 'Cararayan', lat: 13.6388, lng: 123.2322, source_type: 'Handpump', status: 'Functional', flood_risk_level: 2, population_served: 320, metrics: { ph: 7.1, tds_ppm: 240.0, turbidity_ntu: 1.8, coliform_present: false }, wvi_score: 14.8, risk_tier: 'Safe / Compliant', last_updated: '2026-11-10T08:00:00Z', data_provenance: 'Synthetic Demo', history: [], route_waypoints: getShortestRoadRouteCoords('NAGA-01') },
-  { id: 'NAGA-02', name: 'Sabang Riverside Public Kiosk', barangay: 'Sabang', lat: 13.6158, lng: 123.1772, source_type: 'Public Kiosk', status: 'Under Repair', flood_risk_level: 5, population_served: 850, metrics: { ph: 6.4, tds_ppm: 610.0, turbidity_ntu: 7.2, coliform_present: true }, wvi_score: 80.5, risk_tier: 'Critical', last_updated: '2026-11-11T14:30:00Z', data_provenance: 'Synthetic Demo', history: [], route_waypoints: getShortestRoadRouteCoords('NAGA-02') },
-  { id: 'NAGA-03', name: 'Concepcion Pequeña Filtration', barangay: 'Concepcion Pequeña', lat: 13.6130, lng: 123.1992, source_type: 'School Filtration', status: 'Functional', flood_risk_level: 3, population_served: 640, metrics: { ph: 7.3, tds_ppm: 185.0, turbidity_ntu: 0.9, coliform_present: false }, wvi_score: 24.6, risk_tier: 'Safe / Compliant', last_updated: '2026-11-12T07:15:00Z', data_provenance: 'Synthetic Demo', history: [], route_waypoints: getShortestRoadRouteCoords('NAGA-03') },
-  { id: 'NAGA-04', name: 'Triangulo Zone 4 Communal Pump', barangay: 'Triangulo', lat: 13.6122, lng: 123.1862, source_type: 'Handpump', status: 'Functional', flood_risk_level: 4, population_served: 510, metrics: { ph: 6.8, tds_ppm: 430.0, turbidity_ntu: 4.1, coliform_present: false }, wvi_score: 27.7, risk_tier: 'Safe / Compliant', last_updated: '2026-11-11T16:45:00Z', data_provenance: 'Synthetic Demo', history: [], route_waypoints: getShortestRoadRouteCoords('NAGA-04') },
-  { id: 'NAGA-05', name: 'Peñafrancia Basilica Refill', barangay: 'Peñafrancia', lat: 13.6338, lng: 123.1902, source_type: 'Public Kiosk', status: 'Functional', flood_risk_level: 3, population_served: 720, metrics: { ph: 7.2, tds_ppm: 210.0, turbidity_ntu: 1.2, coliform_present: false }, wvi_score: 25.8, risk_tier: 'Safe / Compliant', last_updated: '2026-11-12T06:50:00Z', data_provenance: 'Synthetic Demo', history: [], route_waypoints: getShortestRoadRouteCoords('NAGA-05') },
-  { id: 'NAGA-06', name: 'Mabolo Riverbank Shallow Well', barangay: 'Mabolo', lat: 13.6105, lng: 123.1732, source_type: 'Handpump', status: 'Under Repair', flood_risk_level: 5, population_served: 590, metrics: { ph: 6.6, tds_ppm: 540.0, turbidity_ntu: 5.8, coliform_present: false }, wvi_score: 53.7, risk_tier: 'Moderate', last_updated: '2026-11-11T17:10:00Z', data_provenance: 'Synthetic Demo', history: [], route_waypoints: getShortestRoadRouteCoords('NAGA-06') },
-  { id: 'NAGA-07', name: 'Tabuco Market Public Stand', barangay: 'Tabuco', lat: 13.6166, lng: 123.1842, source_type: 'Public Kiosk', status: 'Abandoned', flood_risk_level: 5, population_served: 910, metrics: { ph: 6.3, tds_ppm: 690.0, turbidity_ntu: 8.4, coliform_present: true }, wvi_score: 97.5, risk_tier: 'Critical', last_updated: '2026-11-11T11:20:00Z', data_provenance: 'Synthetic Demo', history: [], route_waypoints: getShortestRoadRouteCoords('NAGA-07') },
-  { id: 'NAGA-08', name: 'Mt. Isarog Upland Gravity Spring', barangay: 'Pacol', lat: 13.6508, lng: 123.2405, source_type: 'Communal Spring', status: 'Functional', flood_risk_level: 1, population_served: 410, metrics: { ph: 7.4, tds_ppm: 125.0, turbidity_ntu: 0.6, coliform_present: false }, wvi_score: 11.2, risk_tier: 'Safe / Compliant', last_updated: '2026-11-12T08:10:00Z', data_provenance: 'Synthetic Demo', history: [], route_waypoints: getShortestRoadRouteCoords('NAGA-08') },
+  {
+    id: 'NAGA-01',
+    name: 'Sitio Cararayan Shallow Well #2',
+    barangay: 'Cararayan',
+    lat: 13.6388,
+    lng: 123.2322,
+    elevation_m: 48,
+    source_type: 'Handpump',
+    status: 'Functional',
+    flood_risk_level: 2,
+    population_served: 320,
+    metrics: { ph: 7.1, tds_ppm: 240.0, turbidity_ntu: 1.8, coliform_present: false },
+    wvi_score: 14.8,
+    risk_tier: 'Safe / Compliant',
+    last_updated: '2026-11-12T08:00:00Z',
+    data_provenance: 'Simulated Baseline',
+    history: [
+      { id: 'INSP-101', recorded_at: '2026-11-12 08:00', unit: 'LGU Field Unit #01', status: 'Functional', wvi: 14.8, note: 'Clear discharge; concrete apron drainage intact.' },
+    ],
+    route_waypoints: getShortestRoadRouteCoords('NAGA-01'),
+  },
+  {
+    id: 'NAGA-02',
+    name: 'Sabang Riverside Public Kiosk',
+    barangay: 'Sabang',
+    lat: 13.6158,
+    lng: 123.1772,
+    elevation_m: 4,
+    source_type: 'Public Kiosk',
+    status: 'Under Repair',
+    flood_risk_level: 5,
+    population_served: 850,
+    metrics: { ph: 6.4, tds_ppm: 610.0, turbidity_ntu: 7.2, coliform_present: true },
+    wvi_score: 80.5,
+    risk_tier: 'Critical',
+    last_updated: '2026-11-12T14:30:00Z',
+    data_provenance: 'Simulated Baseline',
+    history: [
+      { id: 'INSP-102', recorded_at: '2026-11-12 14:30', unit: 'LGU Field Unit #02', status: 'Under Repair', wvi: 80.5, note: 'Tidal backflow intrusion near Bicol River; positive coliform test.' },
+    ],
+    route_waypoints: getShortestRoadRouteCoords('NAGA-02'),
+  },
+  {
+    id: 'NAGA-03',
+    name: 'Concepcion Pequeña Filtration Station',
+    barangay: 'Concepcion Pequeña',
+    lat: 13.6130,
+    lng: 123.1992,
+    elevation_m: 14,
+    source_type: 'School Filtration',
+    status: 'Functional',
+    flood_risk_level: 3,
+    population_served: 640,
+    metrics: { ph: 7.3, tds_ppm: 185.0, turbidity_ntu: 0.9, coliform_present: false },
+    wvi_score: 24.6,
+    risk_tier: 'Safe / Compliant',
+    last_updated: '2026-11-12T07:15:00Z',
+    data_provenance: 'Simulated Baseline',
+    history: [
+      { id: 'INSP-103', recorded_at: '2026-11-12 07:15', unit: 'Municipal WASH Unit', status: 'Functional', wvi: 24.6, note: 'Dual-media filter pressure nominal; UV disinfection active.' },
+    ],
+    route_waypoints: getShortestRoadRouteCoords('NAGA-03'),
+  },
+  {
+    id: 'NAGA-04',
+    name: 'Triangulo Zone 4 Communal Pump',
+    barangay: 'Triangulo',
+    lat: 13.6122,
+    lng: 123.1862,
+    elevation_m: 6,
+    source_type: 'Handpump',
+    status: 'Functional',
+    flood_risk_level: 4,
+    population_served: 510,
+    metrics: { ph: 6.8, tds_ppm: 430.0, turbidity_ntu: 4.1, coliform_present: false },
+    wvi_score: 27.7,
+    risk_tier: 'Safe / Compliant',
+    last_updated: '2026-11-11T16:45:00Z',
+    data_provenance: 'Simulated Baseline',
+    history: [
+      { id: 'INSP-104', recorded_at: '2026-11-11 16:45', unit: 'LGU Field Unit #03', status: 'Functional', wvi: 27.7, note: 'Slightly elevated TDS after rain; within potable threshold.' },
+    ],
+    route_waypoints: getShortestRoadRouteCoords('NAGA-04'),
+  },
+  {
+    id: 'NAGA-05',
+    name: 'Peñafrancia Community Refill Kiosk',
+    barangay: 'Peñafrancia',
+    lat: 13.6338,
+    lng: 123.1902,
+    elevation_m: 11,
+    source_type: 'Public Kiosk',
+    status: 'Functional',
+    flood_risk_level: 3,
+    population_served: 720,
+    metrics: { ph: 7.2, tds_ppm: 210.0, turbidity_ntu: 1.2, coliform_present: false },
+    wvi_score: 25.8,
+    risk_tier: 'Safe / Compliant',
+    last_updated: '2026-11-12T06:50:00Z',
+    data_provenance: 'Simulated Baseline',
+    history: [
+      { id: 'INSP-105', recorded_at: '2026-11-12 06:50', unit: 'LGU Field Unit #01', status: 'Functional', wvi: 25.8, note: 'Residual chlorine verified at 0.4 mg/L.' },
+    ],
+    route_waypoints: getShortestRoadRouteCoords('NAGA-05'),
+  },
+  {
+    id: 'NAGA-06',
+    name: 'Mabolo Riverbank Shallow Well',
+    barangay: 'Mabolo',
+    lat: 13.6105,
+    lng: 123.1732,
+    elevation_m: 5,
+    source_type: 'Handpump',
+    status: 'Under Repair',
+    flood_risk_level: 5,
+    population_served: 590,
+    metrics: { ph: 6.6, tds_ppm: 540.0, turbidity_ntu: 5.8, coliform_present: false },
+    wvi_score: 53.7,
+    risk_tier: 'Moderate',
+    last_updated: '2026-11-11T17:10:00Z',
+    data_provenance: 'Simulated Baseline',
+    history: [
+      { id: 'INSP-106', recorded_at: '2026-11-11 17:10', unit: 'LGU Field Unit #02', status: 'Under Repair', wvi: 53.7, note: 'Boil-water advisory issued due to elevated turbidity.' },
+    ],
+    route_waypoints: getShortestRoadRouteCoords('NAGA-06'),
+  },
+  {
+    id: 'NAGA-07',
+    name: 'Tabuco Public Water Stand',
+    barangay: 'Tabuco',
+    lat: 13.6166,
+    lng: 123.1842,
+    elevation_m: 4,
+    source_type: 'Public Kiosk',
+    status: 'Abandoned',
+    flood_risk_level: 5,
+    population_served: 910,
+    metrics: { ph: 6.3, tds_ppm: 690.0, turbidity_ntu: 8.4, coliform_present: true },
+    wvi_score: 97.5,
+    risk_tier: 'Critical',
+    last_updated: '2026-11-12T11:20:00Z',
+    data_provenance: 'Simulated Baseline',
+    history: [
+      { id: 'INSP-107', recorded_at: '2026-11-12 11:20', unit: 'Municipal WASH Unit', status: 'Abandoned', wvi: 97.5, note: 'Foot valve seal damaged during flood surge; tanker rationing active.' },
+    ],
+    route_waypoints: getShortestRoadRouteCoords('NAGA-07'),
+  },
+  {
+    id: 'NAGA-08',
+    name: 'Mt. Isarog Upland Gravity Spring Box',
+    barangay: 'Pacol',
+    lat: 13.6508,
+    lng: 123.2405,
+    elevation_m: 115,
+    source_type: 'Communal Spring',
+    status: 'Functional',
+    flood_risk_level: 1,
+    population_served: 410,
+    metrics: { ph: 7.4, tds_ppm: 125.0, turbidity_ntu: 0.6, coliform_present: false },
+    wvi_score: 11.2,
+    risk_tier: 'Safe / Compliant',
+    last_updated: '2026-11-12T08:10:00Z',
+    data_provenance: 'Simulated Baseline',
+    history: [
+      { id: 'INSP-108', recorded_at: '2026-11-12 08:10', unit: 'LGU Field Unit #03', status: 'Functional', wvi: 11.2, note: 'High-elevation spring intake clear; zero sediment.' },
+    ],
+    route_waypoints: getShortestRoadRouteCoords('NAGA-08'),
+  },
+];
+
+export const INITIAL_INCIDENT_REPORTS = [
+  {
+    id: 'REP-2026-01',
+    point_id: 'NAGA-02',
+    barangay: 'Sabang',
+    reporter_role: 'Community User',
+    issue_type: 'Turbid / Discolored Water',
+    description: 'Water from the riverside kiosk turned brownish after high tide.',
+    status: 'Tanker Dispatched',
+    submitted_at: '2026-11-12 09:15',
+  },
+  {
+    id: 'REP-2026-02',
+    point_id: 'NAGA-06',
+    barangay: 'Mabolo',
+    reporter_role: 'Community User',
+    issue_type: 'Low Pressure / Loose Lever',
+    description: 'Handpump lever pin is loose and discharge has slight silt.',
+    status: 'Under LGU Review',
+    submitted_at: '2026-11-12 13:40',
+  },
+];
+
+// --- GENERAL ROLE DEFINITIONS & AUTHENTICATION CREDENTIALS (No Personal Names) ---
+export const ROLE_DEFINITIONS = [
+  {
+    role: 'COMMUNITY',
+    label: 'Community User',
+    organization: 'Public Water Access Portal',
+    requiresCredentials: false,
+    defaultCode: '',
+    permissions: ['view_public_map', 'submit_incident', 'track_reports'],
+    description: 'View public water point safety, filter nearby potable stations, and submit or track community water incident reports.',
+  },
+  {
+    role: 'LGU_PERSONNEL',
+    label: 'LGU Personnel',
+    organization: 'Municipal WASH & Disaster Response Unit',
+    requiresCredentials: true,
+    defaultCode: 'LGU-NAGA-2026',
+    permissions: ['view_public_map', 'submit_incident', 'track_reports', 'log_field_inspection', 'manage_tanker_dispatch', 'update_report_status'],
+    description: 'Access operational GIS telemetry, log water quality field inspections, and coordinate water tanker dispatches.',
+  },
+  {
+    role: 'ADMIN',
+    label: 'Administrator',
+    organization: 'System Governance & Data Quality',
+    requiresCredentials: true,
+    defaultCode: 'ADMIN-GIS-2026',
+    permissions: ['view_public_map', 'submit_incident', 'track_reports', 'log_field_inspection', 'manage_tanker_dispatch', 'update_report_status', 'manage_roles_and_records'],
+    description: 'Manage role permissions, audit system-wide water records, and oversee data provenance.',
+  },
 ];
 
 function distToSegmentXZ(px, pz, ax, az, bx, bz) {
@@ -421,16 +649,14 @@ function distToSegmentXZ(px, pz, ax, az, bx, bz) {
   const wz = pz - az;
   const lenSq = vx * vx + vz * vz;
   const t = lenSq > 0 ? Math.max(0, Math.min(1, (wx * vx + wz * vz) / lenSq)) : 0;
-  const projX = ax + t * vx;
-  const projZ = az + t * vz;
-  return Math.hypot(px - projX, pz - projZ);
+  return Math.hypot(px - (ax + t * vx), pz - (az + t * vz));
 }
 
 const SAMPLED_RIVER_SEGMENTS = (() => {
   const segs = [];
   [
-    { coords: NAGA_RIVER_COORDS, bankHalfWidth: 0.48 },
-    { coords: BICOL_RIVER_COORDS, bankHalfWidth: 0.58 },
+    { coords: NAGA_RIVER_COORDS, bankHalfWidth: 0.42 },
+    { coords: BICOL_RIVER_COORDS, bankHalfWidth: 0.52 },
   ].forEach(({ coords, bankHalfWidth }) => {
     const pts = coords.map(([lat, lng]) => {
       const [x, y, z] = geoToWorld(lat, lng);
@@ -452,29 +678,29 @@ const SAMPLED_RIVER_SEGMENTS = (() => {
 })();
 
 const ALL_ROAD_POLYLINES = [
-  ...NAGA_ROADS_COORDS.map((coords) => ({ coords, halfWidth: 0.17 })),
-  ...NAGA_SECONDARY_STREETS.map((coords) => ({ coords, halfWidth: 0.12 })),
+  ...NAGA_ROADS_COORDS.map((coords) => ({ coords, halfWidth: 0.14 })),
+  ...NAGA_SECONDARY_STREETS.map((coords) => ({ coords, halfWidth: 0.10 })),
 ];
 
-function isClearOfInfrastructure(lat, lng, objectHalfRadius = 0.24, placedList = []) {
+function isClearOfInfrastructure(lat, lng, objectHalfRadius = 0.18, placedList = []) {
   const [x, , z] = geoToWorld(lat, lng);
-  if (Math.abs(x) > 28.0 || Math.abs(z) > 22.0) return false;
+  if (Math.abs(x) > 25.0 || Math.abs(z) > 19.0) return false;
 
   const [hx, , hz] = geoToWorld(CDRRMO_HUB.lat, CDRRMO_HUB.lng);
-  if (Math.hypot(x - hx, z - hz) < objectHalfRadius + 0.65) return false;
+  if (Math.hypot(x - hx, z - hz) < objectHalfRadius + 0.52) return false;
 
   for (const pt of INITIAL_NAGA_POINTS) {
     const [px, , pz] = geoToWorld(pt.lat, pt.lng);
-    if (Math.hypot(x - px, z - pz) < objectHalfRadius + 0.58) return false;
+    if (Math.hypot(x - px, z - pz) < objectHalfRadius + 0.45) return false;
   }
 
   for (const lm of NAGA_LANDMARKS) {
     const [lx, , lz] = geoToWorld(lm.lat, lm.lng);
-    if (Math.hypot(x - lx, z - lz) < objectHalfRadius + Math.max(lm.w, lm.d) * 0.85) return false;
+    if (Math.hypot(x - lx, z - lz) < objectHalfRadius + Math.max(lm.w, lm.d) * 0.72) return false;
   }
 
   for (const poly of ALL_ROAD_POLYLINES) {
-    const minRoadDist = objectHalfRadius + poly.halfWidth + 0.08;
+    const minRoadDist = objectHalfRadius + poly.halfWidth + 0.035;
     for (let i = 0; i < poly.coords.length - 1; i++) {
       const [ax, , az] = geoToWorld(...poly.coords[i]);
       const [bx, , bz] = geoToWorld(...poly.coords[i + 1]);
@@ -483,13 +709,13 @@ function isClearOfInfrastructure(lat, lng, objectHalfRadius = 0.24, placedList =
   }
 
   for (const seg of SAMPLED_RIVER_SEGMENTS) {
-    if (distToSegmentXZ(x, z, seg.ax, seg.az, seg.bx, seg.bz) < objectHalfRadius + seg.bankHalfWidth + 0.12) {
+    if (distToSegmentXZ(x, z, seg.ax, seg.az, seg.bx, seg.bz) < objectHalfRadius + seg.bankHalfWidth + 0.06) {
       return false;
     }
   }
 
   for (const other of placedList) {
-    if (Math.hypot(x - other.x, z - other.z) < objectHalfRadius + other.r + 0.05) {
+    if (Math.hypot(x - other.x, z - other.z) < objectHalfRadius + other.r + 0.025) {
       return false;
     }
   }
@@ -497,133 +723,71 @@ function isClearOfInfrastructure(lat, lng, objectHalfRadius = 0.24, placedList =
   return true;
 }
 
+// --- GIS-BASED BUILDING FOOTPRINTS WITH OSM SIMPLE 3D BUILDINGS ATTRIBUTES ---
 export const NAGA_BUILDING_CLUSTERS = (() => {
   const buildings = [];
   const placed = [];
-  let seed = 101;
+  let seed = 307;
   const nextRand = () => {
     seed = (seed * 1664525 + 1013904223) % 4294967296;
     return seed / 4294967296;
   };
 
-  const roofPalettes = ['#B85D3B', '#01658E', '#475569', '#8C4A32', '#3F624D', '#64748B'];
+  const roofPalettes = ['#8C4A36', '#475569', '#334155', '#784736', '#52606D', '#6B4435'];
   const wallTones = ['white', 'cream', 'sand', 'slate', 'warm'];
 
   const selectBuildingSpec = (lat, lng) => {
-    const distCentro = Math.hypot(lat - 13.6225, lng - 123.1885);
+    const distCentro = Math.hypot(lat - 13.6228, lng - 123.1875);
+    const distMagsaysay = Math.hypot(lat - 13.6315, lng - 123.1945);
+    const distPanganiban = Math.hypot(lat - 13.6175, lng - 123.1950);
+    const urbanCoreDist = Math.min(distCentro, distMagsaysay * 1.1, distPanganiban * 1.1);
+
     const r = nextRand();
     const roofColor = roofPalettes[Math.floor(nextRand() * roofPalettes.length)];
     const tone = wallTones[Math.floor(nextRand() * wallTones.length)];
 
-    if (distCentro < 0.0085) {
-      if (r < 0.34) {
-        return {
-          type: 'highrise_tower',
-          w: 0.38 + nextRand() * 0.14,
-          d: 0.34 + nextRand() * 0.12,
-          h: 1.05 + nextRand() * 0.65,
-          tone,
-          roofColor: '#01658E',
-        };
-      }
-      if (r < 0.68) {
-        return {
-          type: 'stepped_midrise',
-          w: 0.42 + nextRand() * 0.12,
-          d: 0.36 + nextRand() * 0.12,
-          h: 0.68 + nextRand() * 0.38,
-          tone,
-          roofColor: '#94A3B8',
-        };
-      }
+    if (urbanCoreDist < 0.0085) {
+      const levels = 3 + Math.floor(nextRand() * 4);
       return {
-        type: 'l_commercial',
-        w: 0.44 + nextRand() * 0.1,
-        d: 0.38 + nextRand() * 0.1,
-        h: 0.48 + nextRand() * 0.25,
+        type: r < 0.45 ? 'commercial_midrise' : 'commercial_lowrise',
+        levels,
+        w: 0.30 + nextRand() * 0.10,
+        d: 0.26 + nextRand() * 0.08,
+        h: levels * 0.14,
+        roofShape: r < 0.45 ? 'flat' : 'hipped',
         tone,
-        roofColor,
+        roofColor: '#334155',
+        provenance: 'Representative Urban Block',
       };
     }
 
-    if (distCentro < 0.0175) {
-      if (r < 0.25) {
-        return {
-          type: 'stepped_midrise',
-          w: 0.38 + nextRand() * 0.1,
-          d: 0.34 + nextRand() * 0.1,
-          h: 0.58 + nextRand() * 0.32,
-          tone,
-          roofColor: '#64748B',
-        };
-      }
-      if (r < 0.52) {
-        return {
-          type: 'l_commercial',
-          w: 0.40 + nextRand() * 0.1,
-          d: 0.34 + nextRand() * 0.08,
-          h: 0.42 + nextRand() * 0.2,
-          tone,
-          roofColor,
-        };
-      }
-      if (r < 0.80) {
-        return {
-          type: 'townhouse_row',
-          w: 0.46 + nextRand() * 0.1,
-          d: 0.24 + nextRand() * 0.05,
-          h: 0.38 + nextRand() * 0.12,
-          tone,
-          roofColor,
-        };
-      }
+    if (urbanCoreDist < 0.022) {
+      const isComm = r < 0.28;
+      const levels = isComm ? 2 + Math.floor(nextRand() * 2) : 1 + Math.floor(nextRand() * 2);
       return {
-        type: 'gable_villa',
-        w: 0.30 + nextRand() * 0.08,
-        d: 0.26 + nextRand() * 0.06,
-        h: 0.32 + nextRand() * 0.1,
+        type: isComm ? 'commercial_lowrise' : r < 0.65 ? 'residential_gable' : 'residential_hip',
+        levels,
+        w: isComm ? 0.32 + nextRand() * 0.08 : 0.24 + nextRand() * 0.06,
+        d: isComm ? 0.26 + nextRand() * 0.06 : 0.20 + nextRand() * 0.05,
+        h: levels * 0.135,
+        roofShape: isComm ? 'hipped' : 'gabled',
         tone,
         roofColor,
+        provenance: 'Representative Urban Block',
       };
     }
 
-    if (r < 0.18) {
-      return {
-        type: 'l_commercial',
-        w: 0.36 + nextRand() * 0.08,
-        d: 0.32 + nextRand() * 0.08,
-        h: 0.38 + nextRand() * 0.14,
-        tone,
-        roofColor,
-      };
-    }
-    if (r < 0.45) {
-      return {
-        type: 'townhouse_row',
-        w: 0.42 + nextRand() * 0.08,
-        d: 0.23 + nextRand() * 0.04,
-        h: 0.34 + nextRand() * 0.1,
-        tone,
-        roofColor,
-      };
-    }
-    if (r < 0.75) {
-      return {
-        type: 'gable_villa',
-        w: 0.28 + nextRand() * 0.08,
-        d: 0.24 + nextRand() * 0.06,
-        h: 0.28 + nextRand() * 0.1,
-        tone,
-        roofColor,
-      };
-    }
+    const levels = 1 + (r > 0.65 ? 1 : 0);
     return {
-      type: 'hip_house',
-      w: 0.25 + nextRand() * 0.06,
-      d: 0.23 + nextRand() * 0.06,
-      h: 0.26 + nextRand() * 0.08,
+      type: r < 0.55 ? 'residential_gable' : 'residential_hip',
+      levels,
+      w: 0.22 + nextRand() * 0.06,
+      d: 0.19 + nextRand() * 0.05,
+      h: levels * 0.13,
+      roofShape: r < 0.55 ? 'gabled' : 'hipped',
       tone,
       roofColor,
+      provenance: 'Representative Footprint',
     };
   };
 
@@ -635,7 +799,7 @@ export const NAGA_BUILDING_CLUSTERS = (() => {
       const [bx, , bz] = geoToWorld(latB, lngB);
 
       const segLen = Math.hypot(bx - ax, bz - az);
-      if (segLen < 0.45) continue;
+      if (segLen < 0.32) continue;
 
       const dirX = (bx - ax) / segLen;
       const dirZ = (bz - az) / segLen;
@@ -643,8 +807,7 @@ export const NAGA_BUILDING_CLUSTERS = (() => {
       const normZ = dirX;
       const roadAngle = Math.atan2(dirX, dirZ);
 
-      const stepWorld = 0.52;
-      const steps = Math.floor(segLen / stepWorld);
+      const steps = Math.floor(segLen / 0.36);
 
       for (let s = 1; s < steps; s++) {
         const t = s / steps;
@@ -652,54 +815,35 @@ export const NAGA_BUILDING_CLUSTERS = (() => {
         const baseLng = lngA + (lngB - lngA) * t;
 
         [-1, 1].forEach((side) => {
-          if (nextRand() < 0.16) return;
-          const spec = selectBuildingSpec(baseLat, baseLng);
-          const padRadius = Math.hypot(spec.w * 1.15, spec.d * 1.15) * 0.5;
-          const setbackWorld = halfWidth + spec.d * 0.58 + 0.16 + nextRand() * 0.12;
+          [0, 1].forEach((rowIdx) => {
+            if (rowIdx === 1 && Math.hypot(baseLat - 13.6235, baseLng - 123.1905) > 0.022) return;
+            if (nextRand() < (rowIdx === 0 ? 0.12 : 0.35)) return;
 
-          const worldX = ax + (bx - ax) * t + normX * side * setbackWorld;
-          const worldZ = az + (bz - az) * t + normZ * side * setbackWorld;
-          const bLng = NAGA_CENTER.lng + worldX / 255;
-          const bLat = NAGA_CENTER.lat - worldZ / 255;
+            const spec = selectBuildingSpec(baseLat, baseLng);
+            const padRadius = Math.hypot(spec.w, spec.d) * 0.46;
+            const setbackWorld =
+              halfWidth + spec.d * 0.55 + 0.11 + rowIdx * 0.38 + nextRand() * 0.06;
 
-          if (!isClearOfInfrastructure(bLat, bLng, padRadius, placed)) return;
+            const worldX = ax + (bx - ax) * t + normX * side * setbackWorld;
+            const worldZ = az + (bz - az) * t + normZ * side * setbackWorld;
+            const bLng = NAGA_CENTER.lng + worldX / 255;
+            const bLat = NAGA_CENTER.lat - worldZ / 255;
 
-          placed.push({ x: worldX, z: worldZ, r: padRadius });
-          buildings.push({
-            lat: bLat,
-            lng: bLng,
-            rot: roadAngle + (side > 0 ? Math.PI * 0.5 : -Math.PI * 0.5),
-            ...spec,
+            if (!isClearOfInfrastructure(bLat, bLng, padRadius, placed)) return;
+
+            placed.push({ x: worldX, z: worldZ, r: padRadius });
+            buildings.push({
+              id: `BLDG-${buildings.length + 1}`,
+              lat: bLat,
+              lng: bLng,
+              rot: roadAngle + (side > 0 ? Math.PI * 0.5 : -Math.PI * 0.5),
+              ...spec,
+            });
           });
         });
       }
     }
   });
-
-  // Horizon-to-horizon regional settlement fill (Naga + surrounding Camarines Sur borderlands)
-  for (let lat = 13.5750; lat <= 13.6800; lat += 0.0028) {
-    for (let lng = 123.1350; lng <= 123.2850; lng += 0.0028) {
-      const distCentro = Math.hypot(lat - 13.6225, lng - 123.1885);
-      if (distCentro > 0.032 && nextRand() < 0.55) continue;
-      if (distCentro > 0.022 && distCentro <= 0.032 && nextRand() < 0.35) continue;
-
-      const bLat = lat + (nextRand() - 0.5) * 0.0014;
-      const bLng = lng + (nextRand() - 0.5) * 0.0014;
-      const spec = selectBuildingSpec(bLat, bLng);
-      const padRadius = Math.hypot(spec.w * 1.15, spec.d * 1.15) * 0.5;
-
-      if (!isClearOfInfrastructure(bLat, bLng, padRadius, placed)) continue;
-
-      const [bx, , bz] = geoToWorld(bLat, bLng);
-      placed.push({ x: bx, z: bz, r: padRadius });
-      buildings.push({
-        lat: bLat,
-        lng: bLng,
-        rot: Math.floor(nextRand() * 4) * (Math.PI * 0.5) + (nextRand() - 0.5) * 0.18,
-        ...spec,
-      });
-    }
-  }
 
   return buildings;
 })();
@@ -708,26 +852,26 @@ export const NAGA_TREE_CLUSTERS = (() => {
   const trees = [];
   const buildingBoxes = NAGA_BUILDING_CLUSTERS.map((b) => {
     const [x, , z] = geoToWorld(b.lat, b.lng);
-    return { x, z, r: Math.hypot(b.w * 1.15, b.d * 1.15) * 0.5 };
+    return { x, z, r: Math.hypot(b.w, b.d) * 0.5 };
   });
 
   let idx = 0;
-  for (let lat = 13.5740; lat <= 13.6810; lat += 0.0025) {
-    for (let lng = 123.1340; lng <= 123.2860; lng += 0.0026) {
+  for (let lat = 13.5880; lat <= 13.6620; lat += 0.0025) {
+    for (let lng = 123.1520; lng <= 123.2620; lng += 0.0025) {
       idx++;
-      const isOuterOrUpland = lng > 123.212 || lng < 123.170 || lat > 13.642 || lat < 13.604;
-      if (!isOuterOrUpland && idx % 2 === 0) continue;
+      const isUplandOrRiparian = lng > 123.210 || lng < 123.175 || lat > 13.638 || lat < 13.608;
+      if (!isUplandOrRiparian && idx % 2 === 0) continue;
 
-      const tLat = lat + (((idx * 13) % 7) - 3) * 0.00024;
-      const tLng = lng + (((idx * 29) % 7) - 3) * 0.00024;
-      if (!isClearOfInfrastructure(tLat, tLng, 0.13, buildingBoxes)) continue;
+      const tLat = lat + (((idx * 13) % 7) - 3) * 0.00022;
+      const tLng = lng + (((idx * 29) % 7) - 3) * 0.00022;
+      if (!isClearOfInfrastructure(tLat, tLng, 0.12, buildingBoxes)) continue;
 
       const [x, y, z] = geoToWorld(tLat, tLng);
       trees.push({
         x,
         y,
         z,
-        s: 0.65 + (idx % 5) * 0.13,
+        s: 0.65 + (idx % 5) * 0.12,
         variant: idx % 3,
       });
     }
