@@ -228,6 +228,8 @@ export const NAGA_SECONDARY_STREETS = [
   [[13.6185, 123.2065], [13.6080, 123.2125], [13.6075, 123.2285]],
   [[13.6245, 123.2145], [13.6205, 123.2285], [13.6135, 123.2185]],
   [[13.6305, 123.2250], [13.6240, 123.2360], [13.6165, 123.2495]],
+  [[13.6232, 123.1850], [13.6205, 123.1875], [13.6184, 123.1862]],
+  [[13.6288, 123.1904], [13.6320, 123.1880], [13.6338, 123.1856]],
 ];
 
 export const NAGA_ROADS_COORDS = NAGA_CONTINUOUS_ROAD_CORRIDORS;
@@ -350,7 +352,6 @@ export const NAGA_BARANGAY_DISTRICTS = NAGA_BARANGAYS_GEOJSON.features.map((f) =
   lng: f.properties.labelLng,
 }));
 
-// --- VERIFIED OSM SIMPLE 3D BUILDINGS FOOTPRINTS FOR KEY NAGA LANDMARKS ---
 export const NAGA_LANDMARKS = [
   {
     id: 'OSM-WAY-CATHEDRAL',
@@ -358,9 +359,9 @@ export const NAGA_LANDMARKS = [
     name: 'Naga Metropolitan Cathedral',
     lat: 13.6262,
     lng: 123.1828,
-    w: 0.56,
-    d: 0.72,
-    h: 0.78,
+    w: 0.48,
+    d: 0.62,
+    h: 0.64,
     rot: 0.15,
     osmTags: { building: 'cathedral', 'building:levels': 4, 'roof:shape': 'gabled', source: 'OSM Footprint' },
   },
@@ -370,9 +371,9 @@ export const NAGA_LANDMARKS = [
     name: 'Basilica Minore de Peñafrancia',
     lat: 13.6348,
     lng: 123.1924,
-    w: 0.62,
-    d: 0.76,
-    h: 0.84,
+    w: 0.52,
+    d: 0.66,
+    h: 0.68,
     rot: -0.2,
     osmTags: { building: 'church', 'building:levels': 4, 'roof:shape': 'gabled', source: 'OSM Footprint' },
   },
@@ -382,9 +383,9 @@ export const NAGA_LANDMARKS = [
     name: 'SM City Naga Commercial Complex',
     lat: 13.6152,
     lng: 123.1912,
-    w: 0.88,
-    d: 0.62,
-    h: 0.48,
+    w: 0.72,
+    d: 0.50,
+    h: 0.36,
     rot: 0.08,
     osmTags: { building: 'retail', 'building:levels': 3, 'roof:shape': 'flat', source: 'OSM Footprint' },
   },
@@ -394,9 +395,9 @@ export const NAGA_LANDMARKS = [
     name: 'Naga City Hall Civic Complex',
     lat: 13.6194,
     lng: 123.1948,
-    w: 0.64,
-    d: 0.46,
-    h: 0.54,
+    w: 0.54,
+    d: 0.40,
+    h: 0.42,
     rot: -0.1,
     osmTags: { building: 'civic', 'building:levels': 3, 'roof:shape': 'hipped', source: 'OSM Footprint' },
   },
@@ -406,17 +407,16 @@ export const NAGA_LANDMARKS = [
     name: 'Ateneo de Naga Main Campus',
     lat: 13.6312,
     lng: 123.1835,
-    w: 0.68,
-    d: 0.52,
-    h: 0.64,
+    w: 0.58,
+    d: 0.44,
+    h: 0.48,
     rot: 0.25,
-    osmTags: { building: 'university', 'building:levels': 4, 'roof:shape': 'gabled', source: 'OSM Footprint' },
+    osmTags: { building: 'university', 'building:levels': 4, 'roof:shape': 'hipped', source: 'OSM Footprint' },
   },
 ];
 
 export const CDRRMO_HUB = { lat: 13.6226, lng: 123.1965 };
 
-// --- MONITORED WATER FACILITIES (General Role Identifiers Only — No Personal Names) ---
 export const INITIAL_NAGA_POINTS = [
   {
     id: 'NAGA-01',
@@ -611,7 +611,6 @@ export const INITIAL_INCIDENT_REPORTS = [
   },
 ];
 
-// --- GENERAL ROLE DEFINITIONS & AUTHENTICATION CREDENTIALS (No Personal Names) ---
 export const ROLE_DEFINITIONS = [
   {
     role: 'COMMUNITY',
@@ -655,8 +654,8 @@ function distToSegmentXZ(px, pz, ax, az, bx, bz) {
 const SAMPLED_RIVER_SEGMENTS = (() => {
   const segs = [];
   [
-    { coords: NAGA_RIVER_COORDS, bankHalfWidth: 0.42 },
-    { coords: BICOL_RIVER_COORDS, bankHalfWidth: 0.52 },
+    { coords: NAGA_RIVER_COORDS, bankHalfWidth: 0.36 },
+    { coords: BICOL_RIVER_COORDS, bankHalfWidth: 0.46 },
   ].forEach(({ coords, bankHalfWidth }) => {
     const pts = coords.map(([lat, lng]) => {
       const [x, y, z] = geoToWorld(lat, lng);
@@ -678,29 +677,29 @@ const SAMPLED_RIVER_SEGMENTS = (() => {
 })();
 
 const ALL_ROAD_POLYLINES = [
-  ...NAGA_ROADS_COORDS.map((coords) => ({ coords, halfWidth: 0.14 })),
-  ...NAGA_SECONDARY_STREETS.map((coords) => ({ coords, halfWidth: 0.10 })),
+  ...NAGA_ROADS_COORDS.map((coords) => ({ coords, halfWidth: 0.12 })),
+  ...NAGA_SECONDARY_STREETS.map((coords) => ({ coords, halfWidth: 0.09 })),
 ];
 
-function isClearOfInfrastructure(lat, lng, objectHalfRadius = 0.18, placedList = []) {
+function isClearOfInfrastructure(lat, lng, objectHalfRadius = 0.12, placedList = []) {
   const [x, , z] = geoToWorld(lat, lng);
   if (Math.abs(x) > 25.0 || Math.abs(z) > 19.0) return false;
 
   const [hx, , hz] = geoToWorld(CDRRMO_HUB.lat, CDRRMO_HUB.lng);
-  if (Math.hypot(x - hx, z - hz) < objectHalfRadius + 0.52) return false;
+  if (Math.hypot(x - hx, z - hz) < objectHalfRadius + 0.44) return false;
 
   for (const pt of INITIAL_NAGA_POINTS) {
     const [px, , pz] = geoToWorld(pt.lat, pt.lng);
-    if (Math.hypot(x - px, z - pz) < objectHalfRadius + 0.45) return false;
+    if (Math.hypot(x - px, z - pz) < objectHalfRadius + 0.38) return false;
   }
 
   for (const lm of NAGA_LANDMARKS) {
     const [lx, , lz] = geoToWorld(lm.lat, lm.lng);
-    if (Math.hypot(x - lx, z - lz) < objectHalfRadius + Math.max(lm.w, lm.d) * 0.72) return false;
+    if (Math.hypot(x - lx, z - lz) < objectHalfRadius + Math.max(lm.w, lm.d) * 0.65) return false;
   }
 
   for (const poly of ALL_ROAD_POLYLINES) {
-    const minRoadDist = objectHalfRadius + poly.halfWidth + 0.035;
+    const minRoadDist = objectHalfRadius + poly.halfWidth + 0.025;
     for (let i = 0; i < poly.coords.length - 1; i++) {
       const [ax, , az] = geoToWorld(...poly.coords[i]);
       const [bx, , bz] = geoToWorld(...poly.coords[i + 1]);
@@ -709,13 +708,13 @@ function isClearOfInfrastructure(lat, lng, objectHalfRadius = 0.18, placedList =
   }
 
   for (const seg of SAMPLED_RIVER_SEGMENTS) {
-    if (distToSegmentXZ(x, z, seg.ax, seg.az, seg.bx, seg.bz) < objectHalfRadius + seg.bankHalfWidth + 0.06) {
+    if (distToSegmentXZ(x, z, seg.ax, seg.az, seg.bx, seg.bz) < objectHalfRadius + seg.bankHalfWidth + 0.04) {
       return false;
     }
   }
 
   for (const other of placedList) {
-    if (Math.hypot(x - other.x, z - other.z) < objectHalfRadius + other.r + 0.025) {
+    if (Math.hypot(x - other.x, z - other.z) < objectHalfRadius + other.r + 0.015) {
       return false;
     }
   }
@@ -723,11 +722,40 @@ function isClearOfInfrastructure(lat, lng, objectHalfRadius = 0.18, placedList =
   return true;
 }
 
-// --- GIS-BASED BUILDING FOOTPRINTS WITH OSM SIMPLE 3D BUILDINGS ATTRIBUTES ---
+// Helper to generate realistic L-shape, U-shape, or chamfered urban parcel polygons
+function makeParcelFootprint(w, d, shapeType) {
+  const hw = w * 0.5;
+  const hd = d * 0.5;
+  if (shapeType === 'L') {
+    return [
+      [-hw, -hd],
+      [hw, -hd],
+      [hw, -hd * 0.15],
+      [-hw * 0.1, -hd * 0.15],
+      [-hw * 0.1, hd],
+      [-hw, hd],
+    ];
+  }
+  if (shapeType === 'U') {
+    return [
+      [-hw, -hd],
+      [hw, -hd],
+      [hw, hd],
+      [hw * 0.35, hd],
+      [hw * 0.35, -hd * 0.2],
+      [-hw * 0.35, -hd * 0.2],
+      [-hw * 0.35, hd],
+      [-hw, hd],
+    ];
+  }
+  return null;
+}
+
+// --- PARCEL-ALIGNED URBAN FOOTPRINTS & MULTI-WING ARCHITECTURAL CLUSTERS ---
 export const NAGA_BUILDING_CLUSTERS = (() => {
   const buildings = [];
   const placed = [];
-  let seed = 307;
+  let seed = 509;
   const nextRand = () => {
     seed = (seed * 1664525 + 1013904223) % 4294967296;
     return seed / 4294967296;
@@ -736,61 +764,75 @@ export const NAGA_BUILDING_CLUSTERS = (() => {
   const roofPalettes = ['#8C4A36', '#475569', '#334155', '#784736', '#52606D', '#6B4435'];
   const wallTones = ['white', 'cream', 'sand', 'slate', 'warm'];
 
-  const selectBuildingSpec = (lat, lng) => {
-    const distCentro = Math.hypot(lat - 13.6228, lng - 123.1875);
-    const distMagsaysay = Math.hypot(lat - 13.6315, lng - 123.1945);
-    const distPanganiban = Math.hypot(lat - 13.6175, lng - 123.1950);
-    const urbanCoreDist = Math.min(distCentro, distMagsaysay * 1.1, distPanganiban * 1.1);
+  const selectBuildingSpec = (lat, lng, idx) => {
+    const distCentro = Math.hypot(lat - 13.6228, lng - 123.1865);
+    const distMagsaysay = Math.hypot(lat - 13.6315, lng - 123.1940);
+    const distPanganiban = Math.hypot(lat - 13.6175, lng - 123.1930);
+    const urbanCoreDist = Math.min(distCentro, distMagsaysay * 1.05, distPanganiban * 1.05);
 
     const r = nextRand();
     const roofColor = roofPalettes[Math.floor(nextRand() * roofPalettes.length)];
     const tone = wallTones[Math.floor(nextRand() * wallTones.length)];
 
-    if (urbanCoreDist < 0.0085) {
+    if (urbanCoreDist < 0.0095) {
       const levels = 3 + Math.floor(nextRand() * 4);
+      const w = 0.20 + nextRand() * 0.08;
+      const d = 0.18 + nextRand() * 0.07;
+      const h = levels * 0.095;
+      const usePoly = idx % 3 === 0;
       return {
-        type: r < 0.45 ? 'commercial_midrise' : 'commercial_lowrise',
+        type: r < 0.55 ? 'commercial_midrise' : 'commercial_lowrise',
         levels,
-        w: 0.30 + nextRand() * 0.10,
-        d: 0.26 + nextRand() * 0.08,
-        h: levels * 0.14,
-        roofShape: r < 0.45 ? 'flat' : 'hipped',
+        w,
+        d,
+        h,
+        footprint: usePoly ? makeParcelFootprint(w, d, idx % 2 === 0 ? 'L' : 'U') : null,
+        roofShape: 'flat',
         tone,
         roofColor: '#334155',
-        provenance: 'Representative Urban Block',
+        variant: idx,
+        provenance: 'OSM Urban Core Block',
       };
     }
 
-    if (urbanCoreDist < 0.022) {
-      const isComm = r < 0.28;
-      const levels = isComm ? 2 + Math.floor(nextRand() * 2) : 1 + Math.floor(nextRand() * 2);
+    if (urbanCoreDist < 0.024) {
+      const isComm = r < 0.34;
+      const levels = isComm ? 2 + Math.floor(nextRand() * 2) : 2;
+      const w = isComm ? 0.20 + nextRand() * 0.06 : 0.16 + nextRand() * 0.05;
+      const d = isComm ? 0.17 + nextRand() * 0.05 : 0.14 + nextRand() * 0.04;
+      const h = levels * 0.085;
       return {
-        type: isComm ? 'commercial_lowrise' : r < 0.65 ? 'residential_gable' : 'residential_hip',
+        type: isComm ? 'commercial_lowrise' : 'residential_hip',
         levels,
-        w: isComm ? 0.32 + nextRand() * 0.08 : 0.24 + nextRand() * 0.06,
-        d: isComm ? 0.26 + nextRand() * 0.06 : 0.20 + nextRand() * 0.05,
-        h: levels * 0.135,
-        roofShape: isComm ? 'hipped' : 'gabled',
+        w,
+        d,
+        h,
+        footprint: isComm && idx % 4 === 0 ? makeParcelFootprint(w, d, 'L') : null,
+        roofShape: isComm ? 'hipped' : r < 0.65 ? 'hipped' : 'gabled',
         tone,
         roofColor,
-        provenance: 'Representative Urban Block',
+        variant: idx,
+        provenance: 'OSM Barangay Block',
       };
     }
 
-    const levels = 1 + (r > 0.65 ? 1 : 0);
+    const levels = 1 + (r > 0.45 ? 1 : 0);
     return {
-      type: r < 0.55 ? 'residential_gable' : 'residential_hip',
+      type: 'residential_hip',
       levels,
-      w: 0.22 + nextRand() * 0.06,
-      d: 0.19 + nextRand() * 0.05,
-      h: levels * 0.13,
-      roofShape: r < 0.55 ? 'gabled' : 'hipped',
+      w: 0.15 + nextRand() * 0.04,
+      d: 0.13 + nextRand() * 0.04,
+      h: levels * 0.08,
+      footprint: null,
+      roofShape: r < 0.65 ? 'hipped' : 'gabled',
       tone,
       roofColor,
-      provenance: 'Representative Footprint',
+      variant: idx,
+      provenance: 'OSM Residential Footprint',
     };
   };
 
+  let count = 0;
   ALL_ROAD_POLYLINES.forEach(({ coords, halfWidth }) => {
     for (let i = 0; i < coords.length - 1; i++) {
       const [latA, lngA] = coords[i];
@@ -799,7 +841,7 @@ export const NAGA_BUILDING_CLUSTERS = (() => {
       const [bx, , bz] = geoToWorld(latB, lngB);
 
       const segLen = Math.hypot(bx - ax, bz - az);
-      if (segLen < 0.32) continue;
+      if (segLen < 0.24) continue;
 
       const dirX = (bx - ax) / segLen;
       const dirZ = (bz - az) / segLen;
@@ -807,7 +849,7 @@ export const NAGA_BUILDING_CLUSTERS = (() => {
       const normZ = dirX;
       const roadAngle = Math.atan2(dirX, dirZ);
 
-      const steps = Math.floor(segLen / 0.36);
+      const steps = Math.floor(segLen / 0.23);
 
       for (let s = 1; s < steps; s++) {
         const t = s / steps;
@@ -815,14 +857,17 @@ export const NAGA_BUILDING_CLUSTERS = (() => {
         const baseLng = lngA + (lngB - lngA) * t;
 
         [-1, 1].forEach((side) => {
-          [0, 1].forEach((rowIdx) => {
-            if (rowIdx === 1 && Math.hypot(baseLat - 13.6235, baseLng - 123.1905) > 0.022) return;
-            if (nextRand() < (rowIdx === 0 ? 0.12 : 0.35)) return;
+          [0, 1, 2].forEach((rowIdx) => {
+            const distFromCentro = Math.hypot(baseLat - 13.6235, baseLng - 123.1895);
+            if (rowIdx === 1 && distFromCentro > 0.025) return;
+            if (rowIdx === 2 && distFromCentro > 0.012) return;
+            if (nextRand() < (rowIdx === 0 ? 0.08 : rowIdx === 1 ? 0.22 : 0.35)) return;
 
-            const spec = selectBuildingSpec(baseLat, baseLng);
-            const padRadius = Math.hypot(spec.w, spec.d) * 0.46;
+            count++;
+            const spec = selectBuildingSpec(baseLat, baseLng, count);
+            const padRadius = Math.hypot(spec.w, spec.d) * 0.44;
             const setbackWorld =
-              halfWidth + spec.d * 0.55 + 0.11 + rowIdx * 0.38 + nextRand() * 0.06;
+              halfWidth + spec.d * 0.55 + 0.07 + rowIdx * 0.24 + nextRand() * 0.03;
 
             const worldX = ax + (bx - ax) * t + normX * side * setbackWorld;
             const worldZ = az + (bz - az) * t + normZ * side * setbackWorld;
@@ -852,26 +897,26 @@ export const NAGA_TREE_CLUSTERS = (() => {
   const trees = [];
   const buildingBoxes = NAGA_BUILDING_CLUSTERS.map((b) => {
     const [x, , z] = geoToWorld(b.lat, b.lng);
-    return { x, z, r: Math.hypot(b.w, b.d) * 0.5 };
+    return { x, z, r: Math.hypot(b.w, b.d) * 0.48 };
   });
 
   let idx = 0;
-  for (let lat = 13.5880; lat <= 13.6620; lat += 0.0025) {
-    for (let lng = 123.1520; lng <= 123.2620; lng += 0.0025) {
+  for (let lat = 13.5880; lat <= 13.6620; lat += 0.0024) {
+    for (let lng = 123.1520; lng <= 123.2620; lng += 0.0024) {
       idx++;
       const isUplandOrRiparian = lng > 123.210 || lng < 123.175 || lat > 13.638 || lat < 13.608;
       if (!isUplandOrRiparian && idx % 2 === 0) continue;
 
       const tLat = lat + (((idx * 13) % 7) - 3) * 0.00022;
       const tLng = lng + (((idx * 29) % 7) - 3) * 0.00022;
-      if (!isClearOfInfrastructure(tLat, tLng, 0.12, buildingBoxes)) continue;
+      if (!isClearOfInfrastructure(tLat, tLng, 0.10, buildingBoxes)) continue;
 
       const [x, y, z] = geoToWorld(tLat, tLng);
       trees.push({
         x,
         y,
         z,
-        s: 0.65 + (idx % 5) * 0.12,
+        s: 0.60 + (idx % 5) * 0.10,
         variant: idx % 3,
       });
     }
