@@ -12,6 +12,7 @@ import {
   Search,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Plus,
   Minus,
   RotateCcw,
@@ -35,6 +36,7 @@ import {
   INITIAL_NAGA_POINTS,
   INITIAL_INCIDENT_REPORTS,
   ROLE_DEFINITIONS,
+  calculateWaterPointWvi,
 } from './data/nagaGeoData';
 import BicolMap3D from './components/BicolMap3D';
 import BicolAquaLogo from './components/BicolAquaLogo';
@@ -51,6 +53,11 @@ export default function App() {
   // 2. Active Workspace & 3D Validation Sample Mode
   const [activeWorkspace, setActiveWorkspace] = useState('MAP');
   const [validationMode, setValidationMode] = useState(false);
+  const [isLegendExpanded, setIsLegendExpanded] = useState(true);
+
+  useEffect(() => {
+    setIsLegendExpanded(activeWorkspace === 'MAP' && !validationMode);
+  }, [activeWorkspace, validationMode]);
 
   // 3. GIS & Telemetry State
   const [waterPoints, setWaterPoints] = useState(INITIAL_NAGA_POINTS);
@@ -78,6 +85,7 @@ export default function App() {
   // 6. Map Layer Toggles
   const [showFloodLayer, setShowFloodLayer] = useState(true);
   const [showTankerRoutes, setShowTankerRoutes] = useState(true);
+  const [showLabels, setShowLabels] = useState(true);
 
   // 7. LGU Field Inspection Form State (General Unit Identifier)
   const [selectedPointId, setSelectedPointId] = useState('NAGA-02');
@@ -181,12 +189,17 @@ export default function App() {
     const numTds = parseFloat(tdsPpm) || 250;
     const numTurb = parseFloat(turbidityNtu) || 1.5;
 
-    const phPenalty = Math.abs(numPh - 7.2) * 14;
-    const tdsPenalty = Math.max(0, (numTds - 300) / 12);
-    const turbPenalty = numTurb * 4.5;
-    const coliPenalty = coliformPresent ? 35 : 0;
-    const computedWvi = Math.min(99.5, Math.max(8.0, +(phPenalty + tdsPenalty + turbPenalty + coliPenalty).toFixed(1)));
-    const computedTier = computedWvi >= 65 ? 'Critical' : computedWvi >= 35 ? 'Moderate' : 'Safe / Compliant';
+    const targetPt = waterPoints.find((pt) => pt.id === selectedPointId) || INITIAL_NAGA_POINTS[0];
+    const { wvi_score: computedWvi, risk_tier: computedTier } = calculateWaterPointWvi({
+      ...targetPt,
+      status: pumpStatus,
+      metrics: {
+        ph: numPh,
+        tds_ppm: numTds,
+        turbidity_ntu: numTurb,
+        coliform_present: coliformPresent,
+      },
+    });
 
     const newRecord = {
       id: `INSP-${Date.now().toString().slice(-4)}`,
@@ -343,7 +356,7 @@ export default function App() {
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-white text-slate-900 font-sans select-none">
       {/* PREDOMINANTLY WHITE PROFESSIONAL GIS HEADER */}
-      <header className="h-14 bg-white border-b border-slate-200 px-4 md:px-5 flex items-center justify-between gap-3 shrink-0 z-30 shadow-2xs">
+      <header className="h-14 bg-white border-b border-slate-200 px-4 md:px-5 flex items-center justify-between gap-3 shrink-0 z-30 shadow-sm">
         {/* Left: Brand Identity + Search + 3D Model Validation Toggle */}
         <div className="flex items-center gap-3">
           <button
@@ -424,7 +437,7 @@ export default function App() {
             }}
             className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 transition-all ${
               activeWorkspace === 'MAP' && !validationMode
-                ? 'bg-white text-[#0284C7] shadow-2xs border border-slate-200/80'
+                ? 'bg-white text-[#0284C7] shadow-sm border border-slate-200/80'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
@@ -440,7 +453,7 @@ export default function App() {
             }}
             className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 transition-all ${
               activeWorkspace === 'RESIDENT'
-                ? 'bg-white text-[#0284C7] shadow-2xs border border-slate-200/80'
+                ? 'bg-white text-[#0284C7] shadow-sm border border-slate-200/80'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
@@ -458,7 +471,7 @@ export default function App() {
                 }}
                 className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 transition-all ${
                   activeWorkspace === 'LGU'
-                    ? 'bg-white text-[#0284C7] shadow-2xs border border-slate-200/80'
+                    ? 'bg-white text-[#0284C7] shadow-sm border border-slate-200/80'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -474,7 +487,7 @@ export default function App() {
                 }}
                 className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 transition-all ${
                   activeWorkspace === 'BHW'
-                    ? 'bg-white text-[#0284C7] shadow-2xs border border-slate-200/80'
+                    ? 'bg-white text-[#0284C7] shadow-sm border border-slate-200/80'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -493,7 +506,7 @@ export default function App() {
               }}
               className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1 transition-all ${
                 activeWorkspace === 'ADMIN'
-                  ? 'bg-white text-[#0284C7] shadow-2xs border border-slate-200/80'
+                  ? 'bg-white text-[#0284C7] shadow-sm border border-slate-200/80'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -514,7 +527,7 @@ export default function App() {
                 onClick={() => handleRoleClick(roleDef)}
                 className={`px-2.5 py-1 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-all ${
                   isSelected
-                    ? 'bg-[#0284C7] text-white shadow-2xs'
+                    ? 'bg-[#0284C7] text-white shadow-sm'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-white'
                 }`}
               >
@@ -529,12 +542,19 @@ export default function App() {
       </header>
 
       {/* FULL-VIEWPORT 3D GEOSPATIAL CANVAS + WHITE CONTEXTUAL HUDS */}
-      <div className="flex-1 relative overflow-hidden">
+      <div
+        className="flex-1 relative overflow-clip"
+        onScroll={(e) => {
+          if (e.currentTarget.scrollLeft !== 0) e.currentTarget.scrollLeft = 0;
+          if (e.currentTarget.scrollTop !== 0) e.currentTarget.scrollTop = 0;
+        }}
+      >
         <div className="absolute inset-0 z-0">
           <BicolMap3D
             waterPoints={filteredPoints}
             showFloodLayer={showFloodLayer}
             showTankerRoutes={showTankerRoutes}
+            showLabels={showLabels}
             activeMapNode={activeMapNode}
             onNodeSelect={setActiveMapNode}
             cameraCommand={cameraCommand}
@@ -624,7 +644,7 @@ export default function App() {
 
               {/* COMMUNITY USER WATER POINT FINDER & INCIDENT TRACKER */}
               {!validationMode && activeWorkspace === 'RESIDENT' && (
-                <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl shadow-md w-full sm:w-[390px] max-h-[calc(100vh-8.5rem)] flex flex-col overflow-hidden">
+                <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl shadow-md w-full sm:w-[390px] max-h-[calc(100vh-11.5rem)] flex flex-col overflow-hidden">
                   <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/70">
                     <div className="flex items-center justify-between">
                       <div>
@@ -1026,17 +1046,27 @@ export default function App() {
                 >
                   <Truck className="w-4 h-4" />
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setShowLabels(!showLabels)}
+                  className={`p-2 rounded-lg transition-colors ${
+                    showLabels ? 'bg-[#0284C7] text-white' : 'hover:bg-slate-100 text-slate-500'
+                  }`}
+                  title="Toggle Smart Map Labels"
+                >
+                  <MapPin className="w-4 h-4" />
+                </button>
               </div>
 
               {activeMapNode && !validationMode && (
-                <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl p-4 shadow-lg w-76 sm:w-80 space-y-3">
+                <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl p-4 shadow-lg w-72 sm:w-80 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-1.5">
                         <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#0284C7]">
                           {activeMapNode.id} • {activeMapNode.source_type}
                         </span>
-                        <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[9px] font-semibold">
+                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 text-[9px] font-semibold">
                           {activeMapNode.data_provenance}
                         </span>
                       </div>
@@ -1136,24 +1166,89 @@ export default function App() {
 
           {/* BOTTOM ROW */}
           <div className="flex flex-col lg:flex-row items-stretch lg:items-end justify-between gap-4">
-            <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-slate-200 rounded-lg px-3.5 py-2 shadow-2xs flex flex-wrap items-center gap-4 text-[11px] font-semibold text-slate-700 self-start">
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-                WVI Symbology:
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" /> Safe (Under 35)
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Advisory (35–64)
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-600" /> Critical (65+)
-              </span>
-              <span className="hidden sm:inline text-slate-300">|</span>
-              <span className="hidden sm:flex items-center gap-1 text-[10px] text-slate-500">
-                <Info className="w-3 h-3 text-[#0284C7]" />
-                OSM Landmarks + Representative Urban Blocks • Baseline telemetry simulated unless marked Verified
-              </span>
+            <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-xl px-3.5 py-2.5 shadow-md flex flex-col gap-2 self-start max-w-2xl transition-all">
+              <button
+                type="button"
+                onClick={() => setIsLegendExpanded((prev) => !prev)}
+                className={`flex items-center justify-between gap-4 w-full text-left ${
+                  isLegendExpanded ? 'border-b border-slate-100 pb-1.5' : ''
+                }`}
+                title={isLegendExpanded ? 'Collapse WVI Legend' : 'Expand WVI Legend'}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#0284C7] shrink-0" />
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-800">
+                    Water Vulnerability Index (WVI) Symbology
+                  </span>
+                  {!isLegendExpanded && (
+                    <div className="hidden sm:flex items-center gap-2 ml-2 pl-2 border-l border-slate-200 text-[10px] font-semibold">
+                      <span className="inline-flex items-center gap-1 text-emerald-800">
+                        <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                        &lt;35
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-amber-800">
+                        <span className="w-2 h-2 rounded-full bg-amber-500" />
+                        35–64
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-red-800">
+                        <span className="w-2 h-2 rounded-full bg-red-600" />
+                        65+
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {isLegendExpanded && (
+                    <span className="text-[10px] font-semibold text-slate-500 hidden sm:inline">
+                      0–100 Composite Risk Scale
+                    </span>
+                  )}
+                  <span className="p-0.5 rounded-md hover:bg-slate-100 text-slate-500">
+                    {isLegendExpanded ? (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    )}
+                  </span>
+                </div>
+              </button>
+
+              {isLegendExpanded && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-emerald-50/80 border border-emerald-200/80">
+                      <span className="w-3 h-3 rounded-full bg-emerald-600 ring-2 ring-emerald-200 shrink-0" />
+                      <div className="leading-tight">
+                        <div className="text-xs font-extrabold text-emerald-950">Safe: Under 35</div>
+                        <div className="text-[10px] font-medium text-emerald-700">Potable / Compliant</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-amber-50/80 border border-amber-200/80">
+                      <span className="w-3 h-3 rounded-full bg-amber-500 ring-2 ring-amber-200 shrink-0" />
+                      <div className="leading-tight">
+                        <div className="text-xs font-extrabold text-amber-950">Advisory: 35–64</div>
+                        <div className="text-[10px] font-medium text-amber-800">Boil-Water / Monitor</div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-red-50/80 border border-red-200/80">
+                      <span className="w-3 h-3 rounded-full bg-red-600 ring-2 ring-red-200 shrink-0" />
+                      <div className="leading-tight">
+                        <div className="text-xs font-extrabold text-red-950">Critical: 65 &amp; above</div>
+                        <div className="text-[10px] font-medium text-red-700">Tanker Rationing Active</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-[10.5px] font-medium text-slate-500 pt-0.5">
+                    <Info className="w-3.5 h-3.5 text-[#0284C7] shrink-0" />
+                    <span>
+                      OSM Landmarks + Representative Urban Blocks • Baseline telemetry simulated unless marked Verified
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
 
             {!validationMode && activeWorkspace === 'LGU' && canAccessLGU && (
@@ -1224,7 +1319,7 @@ export default function App() {
 
         {/* ROLE AUTHENTICATION MODAL (Enforces Credential Check on Role Selection) */}
         {pendingRoleTarget && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
             <form
               onSubmit={handleAuthenticateSubmit}
               className="bg-white border border-slate-200 rounded-xl shadow-xl max-w-md w-full p-5 space-y-4"
@@ -1290,7 +1385,7 @@ export default function App() {
 
         {/* COMMUNITY INCIDENT REPORT MODAL */}
         {reportModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
             <div className="bg-white border border-slate-200 rounded-xl shadow-xl max-w-md w-full p-5 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-extrabold text-slate-900">
