@@ -1,829 +1,1764 @@
-import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { geoToWorld } from '../data/nagaGeoData.js';
+import { NAGA_OSM_BUILDINGS } from '../data/nagaOsmBuildings.js';
+import {
+  BICOL_RIVER_COORDS,
+  CDRRMO_HUB,
+  INITIAL_EVACUATION_CAMPS_FALLBACK,
+  INITIAL_NAGA_POINTS,
+  NAGA_BARANGAYS_GEOJSON,
+  NAGA_RIVER_COORDS,
+} from '../data/nagaGeoData.js';
+import {
+  NAGA_LOCAL_STREETS,
+  NAGA_OSM_PRIMARY_ROADS,
+  NAGA_OSM_SECONDARY_ROADS,
+  NAGA_TERTIARY_ROADS,
+} from '../data/nagaOsmRoads.js';
 
-const Y_AXIS = new THREE.Vector3(0, 1, 0);
+export const CIVIC_HALL_MIN_ZOOM = 13.8;
+export const DETAIL_BUILDINGS_MIN_ZOOM = 14.8;
+export const MAX_VIEWPORT_BUILDINGS = 10000;
+export const MIN_MACRO_CLEARANCE_M = 500;
+export const EXAGGERATION_MULTIPLIER = 85.0;
+export const MIN_BUILDING_SCALE = [10.0, 10.5, 10.0];
 
-const WALL_PALETTE = {
-  white: '#F4F3EE',
-  cream: '#EFE7D4',
-  sand: '#E3D3B6',
-  sandstone: '#DDD0BA',
-  warm: '#E6D9C7',
-  ochre: '#D9C08F',
-  terracotta: '#C8785B',
-  sage: '#CDD9CC',
-  slate: '#C5CDD4',
-  limestone: '#E6E3DC',
-  travertine: '#DFD7C8',
-  charcoal: '#4A5563',
-  coral: '#D8A295',
-  teal: '#BCCECE',
-};
+const PROCEDURAL_STEP_M = 220;
+const PROCEDURAL_OFFSET_M = 68;
+const MIN_OSM_CLEARANCE_M = 120;
+const MIN_PROCEDURAL_ROAD_CLEARANCE_M = 28;
+const COLOSSAL_TOY_BASE_UNIT_M = 4.18;
 
-// Shared unit templates (non-indexed for zero-overhead vertex color merging)
-const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
-const UNIT_CYL = new THREE.CylinderGeometry(0.5, 0.5, 1, 10).toNonIndexed();
+const MIN_FACILITY_CLEARANCE_M = 250;
+const MIN_CIVIC_LANDMARK_CLEARANCE_M = 500;
+const MIN_RIVER_CLEARANCE_M = 185;
+const MIN_CREEK_CLEARANCE_M = 120;
 
-function createUnitRoofGeo(kind = 'hipped') {
-  const pos = [];
-  const uv = [];
-  const pushTri = (ax, ay, az, bx, by, bz, cx, cy, cz, ua = 0, va = 0, ub = 1, vb = 0, uc = 0.5, vc = 1) => {
-    pos.push(ax, ay, az, bx, by, bz, cx, cy, cz);
-    uv.push(ua, va, ub, vb, uc, vc);
-  };
-  const hw = 0.5, hd = 0.5, h = 1;
-  if (kind === 'gabled') {
-    const rx = 0.5;
-    pushTri(-hw, 0, hd, hw, 0, hd, rx, h, 0, 0, 0, 1, 0, 1, 1);
-    pushTri(-hw, 0, hd, rx, h, 0, -rx, h, 0, 0, 0, 1, 1, 0, 1);
-    pushTri(hw, 0, -hd, -hw, 0, -hd, -rx, h, 0, 0, 0, 1, 0, 1, 1);
-    pushTri(hw, 0, -hd, -rx, h, 0, rx, h, 0, 0, 0, 1, 1, 0, 1);
-    pushTri(-hw, 0, -hd, -hw, 0, hd, -rx, h, 0, 0, 0, 1, 0, 0.5, 1);
-    pushTri(hw, 0, hd, hw, 0, -hd, rx, h, 0, 0, 0, 1, 0, 0.5, 1);
-  } else if (kind === 'shed') {
-    // Mono-pitch roof sloping down toward +Z
-    pushTri(-hw, 0, hd, hw, 0, hd, hw, h, -hd, 0, 0, 1, 0, 1, 1);
-    pushTri(-hw, 0, hd, hw, h, -hd, -hw, h, -hd, 0, 0, 1, 1, 0, 1);
-    pushTri(-hw, 0, -hd, -hw, 0, hd, -hw, h, -hd, 0, 0, 1, 0, 0, 1);
-    pushTri(hw, 0, hd, hw, 0, -hd, hw, h, -hd, 0, 0, 1, 0, 1, 1);
-    pushTri(-hw, 0, -hd, hw, h, -hd, hw, 0, -hd, 0, 0, 1, 1, 1, 0);
-    pushTri(-hw, 0, -hd, -hw, h, -hd, hw, h, -hd, 0, 0, 0, 1, 1, 1);
-  } else {
-    const rx = 0.25;
-    pushTri(-hw, 0, hd, hw, 0, hd, rx, h, 0, 0, 0, 1, 0, 0.75, 1);
-    pushTri(-hw, 0, hd, rx, h, 0, -rx, h, 0, 0, 0, 0.75, 1, 0.25, 1);
-    pushTri(hw, 0, -hd, -hw, 0, -hd, -rx, h, 0, 0, 0, 1, 0, 0.75, 1);
-    pushTri(hw, 0, -hd, -rx, h, 0, rx, h, 0, 0, 0, 0.75, 1, 0.25, 1);
-    pushTri(-hw, 0, -hd, -hw, 0, hd, -rx, h, 0, 0, 0, 1, 0, 0.5, 1);
-    pushTri(hw, 0, hd, hw, 0, -hd, rx, h, 0, 0, 0, 1, 0, 0.5, 1);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  geo.computeVertexNormals();
-  return geo;
+const COS_NAGA_LAT = Math.cos((13.621 * Math.PI) / 180);
+const METERS_PER_DEG_LAT = 110636;
+const METERS_PER_DEG_LNG = 111320 * COS_NAGA_LAT;
+const METERS_PER_BUILDING_UNIT = 114;
+
+export const BUILDING_ARCHETYPE_CONFIGS = [
+  {
+    key: 'house_residential',
+    url: '/models/house_residential.glb',
+    minZoom: DETAIL_BUILDINGS_MIN_ZOOM,
+    targetFootprintM: 9.5,
+    triangles: 6671,
+    rawBounds: {
+      min: [-4.75, 0, -6.2],
+      max: [4.75, 7.6, 6.2],
+      size: [9.5, 7.6, 12.4],
+    },
+    getScale: [1, 1, 1],
+    zOffset: 0,
+  },
+  {
+    key: 'shophouse_commercial',
+    url: '/models/shophouse_commercial.glb',
+    minZoom: DETAIL_BUILDINGS_MIN_ZOOM,
+    targetFootprintM: 12.5,
+    triangles: 6608,
+    rawBounds: {
+      min: [-6.25, 0, -6.75],
+      max: [6.25, 11.4, 6.75],
+      size: [12.5, 11.4, 13.5],
+    },
+    getScale: [1, 1, 1],
+    zOffset: 0,
+  },
+  {
+    key: 'midrise_building',
+    url: '/models/midrise_building.glb',
+    minZoom: DETAIL_BUILDINGS_MIN_ZOOM,
+    targetFootprintM: 16,
+    triangles: 109722,
+    rawBounds: {
+      min: [-7.5, 0, -9.5],
+      max: [7.5, 21.0, 9.5],
+      size: [15.0, 21.0, 19.0],
+    },
+    getScale: [1, 1, 1],
+    zOffset: 0,
+  },
+  {
+    key: 'civic_hall',
+    url: '/models/low_poly_city_hall.glb?v=6',
+    minZoom: CIVIC_HALL_MIN_ZOOM,
+    targetFootprintM: 28,
+    triangles: 6917,
+    rawBounds: {
+      min: [-2.504, -0.002, -4.624],
+      max: [2.906, 7.105, 4.624],
+      size: [5.41, 7.107, 9.248],
+    },
+    getScale: [1, 1, 1],
+    zOffset: 0,
+  },
+];
+
+const ARCHETYPE_CONFIG_BY_KEY = Object.fromEntries(
+  BUILDING_ARCHETYPE_CONFIGS.map((cfg) => [cfg.key, cfg])
+);
+
+const CONCEPCION_CREEK_COORDS = [
+  [13.6212, 123.1995],
+  [13.6215, 123.2022],
+  [13.622, 123.2045],
+  [13.6225, 123.207],
+];
+
+const NAGA_ELEVATION_ANCHORS_M = [
+  { lat: 13.6192, lng: 123.1766, elevM: 4.0 },
+  { lat: 13.6164, lng: 123.1848, elevM: 4.0 },
+  { lat: 13.6095, lng: 123.1818, elevM: 5.0 },
+  { lat: 13.6118, lng: 123.1924, elevM: 6.0 },
+  { lat: 13.6335, lng: 123.1922, elevM: 11.0 },
+  { lat: 13.6178, lng: 123.2042, elevM: 14.0 },
+  { lat: 13.6275, lng: 123.2215, elevM: 48.0 },
+  { lat: 13.647, lng: 123.224, elevM: 115.0 },
+];
+
+const DEG_TO_RAD = Math.PI / 180;
+const EARTH_RADIUS_M = 6371000;
+
+function haversineDistanceM(aLat, aLng, bLat, bLng) {
+  const dLat = (bLat - aLat) * DEG_TO_RAD;
+  const dLng = (bLng - aLng) * DEG_TO_RAD;
+  const sinLat = Math.sin(dLat * 0.5);
+  const sinLng = Math.sin(dLng * 0.5);
+  const h =
+    sinLat * sinLat +
+    Math.cos(aLat * DEG_TO_RAD) * Math.cos(bLat * DEG_TO_RAD) * sinLng * sinLng;
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-const UNIT_HIP_ROOF = createUnitRoofGeo('hipped');
-const UNIT_GABLE_ROOF = createUnitRoofGeo('gabled');
-const UNIT_SHED_ROOF = createUnitRoofGeo('shed');
+function distanceMeters(aLat, aLng, bLat, bLng) {
+  const dy = (aLat - bLat) * METERS_PER_DEG_LAT;
+  const dx = (aLng - bLng) * METERS_PER_DEG_LNG;
+  return Math.hypot(dx, dy);
+}
 
-function hashBuilding(b) {
+function pointToSegmentDistanceM(lat, lng, aLat, aLng, bLat, bLng) {
+  const px = lng * METERS_PER_DEG_LNG;
+  const py = lat * METERS_PER_DEG_LAT;
+  const ax = aLng * METERS_PER_DEG_LNG;
+  const ay = aLat * METERS_PER_DEG_LAT;
+  const bx = bLng * METERS_PER_DEG_LNG;
+  const by = bLat * METERS_PER_DEG_LAT;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  const t = lenSq > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq)) : 0;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+function getTerrainElevationM(lat, lng) {
+  let wSum = 0;
+  let eSum = 0;
+  for (let i = 0; i < NAGA_ELEVATION_ANCHORS_M.length; i++) {
+    const a = NAGA_ELEVATION_ANCHORS_M[i];
+    const dKm = distanceMeters(lat, lng, a.lat, a.lng) / 1000;
+    const d2 = dKm * dKm + 0.12;
+    const w = 1 / (d2 * d2);
+    wSum += w;
+    eSum += w * a.elevM;
+  }
+  return wSum > 0 ? Number((eSum / wSum).toFixed(2)) : 5.0;
+}
+
+const ROAD_GRID_STEP_DEG = 0.0025;
+const MAJOR_ROAD_GRID = new Map();
+const ALL_ROAD_CELL_DEG = 0.0005;
+const ALL_ROAD_GRID = new Map();
+
+function indexRoadGroup(polylines, isMajor) {
+  if (!Array.isArray(polylines)) return;
+  for (let i = 0; i < polylines.length; i++) {
+    const line = polylines[i];
+    if (!Array.isArray(line) || line.length < 2) continue;
+    for (let j = 0; j < line.length - 1; j++) {
+      const pA = line[j];
+      const pB = line[j + 1];
+      if (!pA || !pB) continue;
+      const seg = { aLat: pA[0], aLng: pA[1], bLat: pB[0], bLng: pB[1] };
+
+      const aR1 = Math.floor(Math.min(seg.aLat, seg.bLat) / ALL_ROAD_CELL_DEG);
+      const aR2 = Math.floor(Math.max(seg.aLat, seg.bLat) / ALL_ROAD_CELL_DEG);
+      const aC1 = Math.floor(Math.min(seg.aLng, seg.bLng) / ALL_ROAD_CELL_DEG);
+      const aC2 = Math.floor(Math.max(seg.aLng, seg.bLng) / ALL_ROAD_CELL_DEG);
+      for (let r = aR1; r <= aR2; r++) {
+        for (let c = aC1; c <= aC2; c++) {
+          const key = `${r},${c}`;
+          let bucket = ALL_ROAD_GRID.get(key);
+          if (!bucket) {
+            bucket = [];
+            ALL_ROAD_GRID.set(key, bucket);
+          }
+          bucket.push(seg);
+        }
+      }
+
+      if (isMajor) {
+        const minCellLat = Math.floor(Math.min(seg.aLat, seg.bLat) / ROAD_GRID_STEP_DEG);
+        const maxCellLat = Math.floor(Math.max(seg.aLat, seg.bLat) / ROAD_GRID_STEP_DEG);
+        const minCellLng = Math.floor(Math.min(seg.aLng, seg.bLng) / ROAD_GRID_STEP_DEG);
+        const maxCellLng = Math.floor(Math.max(seg.aLng, seg.bLng) / ROAD_GRID_STEP_DEG);
+        for (let r = minCellLat; r <= maxCellLat; r++) {
+          for (let c = minCellLng; c <= maxCellLng; c++) {
+            const key = `${r},${c}`;
+            let bucket = MAJOR_ROAD_GRID.get(key);
+            if (!bucket) {
+              bucket = [];
+              MAJOR_ROAD_GRID.set(key, bucket);
+            }
+            bucket.push(seg);
+          }
+        }
+      }
+    }
+  }
+}
+
+indexRoadGroup(NAGA_OSM_PRIMARY_ROADS, true);
+indexRoadGroup(NAGA_OSM_SECONDARY_ROADS, true);
+indexRoadGroup(NAGA_TERTIARY_ROADS, false);
+indexRoadGroup(NAGA_LOCAL_STREETS, false);
+
+function getMajorRoadDistanceM(lat, lng) {
+  const r0 = Math.floor(lat / ROAD_GRID_STEP_DEG);
+  const c0 = Math.floor(lng / ROAD_GRID_STEP_DEG);
+  let minDist = Infinity;
+  const seen = new Set();
+
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const bucket = MAJOR_ROAD_GRID.get(`${r0 + dr},${c0 + dc}`);
+      if (!bucket) continue;
+      for (let i = 0; i < bucket.length; i++) {
+        const seg = bucket[i];
+        if (seen.has(seg)) continue;
+        seen.add(seg);
+        const d = pointToSegmentDistanceM(lat, lng, seg.aLat, seg.aLng, seg.bLat, seg.bLng);
+        if (d < minDist) minDist = d;
+      }
+    }
+  }
+
+  return minDist;
+}
+
+function isNearAnyRoadM(lat, lng, thresholdM) {
+  const r0 = Math.floor(lat / ALL_ROAD_CELL_DEG);
+  const c0 = Math.floor(lng / ALL_ROAD_CELL_DEG);
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const bucket = ALL_ROAD_GRID.get(`${r0 + dr},${c0 + dc}`);
+      if (!bucket) continue;
+      for (let i = 0; i < bucket.length; i++) {
+        const seg = bucket[i];
+        if (
+          pointToSegmentDistanceM(lat, lng, seg.aLat, seg.aLng, seg.bLat, seg.bLng) < thresholdM
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+let MAJOR_ROAD_SEGMENTS_CACHE = null;
+
+function getMajorRoadSegmentsFlat() {
+  if (MAJOR_ROAD_SEGMENTS_CACHE) return MAJOR_ROAD_SEGMENTS_CACHE;
+  const flat = [];
+  const groups = [NAGA_OSM_PRIMARY_ROADS, NAGA_OSM_SECONDARY_ROADS];
+  for (let g = 0; g < groups.length; g++) {
+    const list = groups[g];
+    if (!Array.isArray(list)) continue;
+    for (let r = 0; r < list.length; r++) {
+      const road = list[r];
+      if (!Array.isArray(road)) continue;
+      for (let i = 0; i < road.length - 1; i++) {
+        const [aLat, aLng] = road[i];
+        const [bLat, bLng] = road[i + 1];
+        if (
+          !Number.isFinite(aLat) ||
+          !Number.isFinite(aLng) ||
+          !Number.isFinite(bLat) ||
+          !Number.isFinite(bLng)
+        ) {
+          continue;
+        }
+        flat.push({ aLat, aLng, bLat, bLng });
+      }
+    }
+  }
+  MAJOR_ROAD_SEGMENTS_CACHE = flat;
+  return flat;
+}
+
+function getNearestRoadInfo(lat, lng) {
+  const px = lng * METERS_PER_DEG_LNG;
+  const py = lat * METERS_PER_DEG_LAT;
+  let bestRawDist = Infinity;
+  let bestRawSeg = null;
+  let bestRawSide = 1;
+  let bestCleanDist = Infinity;
+  let bestCleanSeg = null;
+  let bestCleanSide = 1;
+
+  const evalSegment = (seg) => {
+    const ax = seg.aLng * METERS_PER_DEG_LNG;
+    const ay = seg.aLat * METERS_PER_DEG_LAT;
+    const bx = seg.bLng * METERS_PER_DEG_LNG;
+    const by = seg.bLat * METERS_PER_DEG_LAT;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq < 9) return;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+    const cx = ax + t * dx;
+    const cy = ay + t * dy;
+    const d = Math.hypot(px - cx, py - cy);
+    const side = (px - cx) * dy - (py - cy) * dx >= 0 ? 1 : -1;
+
+    if (d < bestRawDist) {
+      bestRawDist = d;
+      bestRawSeg = { dx, dy };
+      bestRawSide = side;
+    }
+    if (lenSq >= 625 && d < bestCleanDist) {
+      bestCleanDist = d;
+      bestCleanSeg = { dx, dy };
+      bestCleanSide = side;
+    }
+  };
+
+  const majorSegs = getMajorRoadSegmentsFlat();
+  for (let i = 0; i < majorSegs.length; i++) {
+    evalSegment(majorSegs[i]);
+  }
+
+  const chosenSeg =
+    bestCleanSeg && bestCleanDist <= bestRawDist + 25 ? bestCleanSeg : bestRawSeg;
+  const chosenSide =
+    chosenSeg === bestCleanSeg ? bestCleanSide : bestRawSide;
+
+  if (!chosenSeg) {
+    return { bearingDeg: 0, angleDeg: 0, signedSide: 1 };
+  }
+  const rawBearingDeg = (Math.atan2(chosenSeg.dx, chosenSeg.dy) * 180) / Math.PI;
+  const bearingDeg = ((rawBearingDeg % 360) + 360) % 360;
+  return {
+    bearingDeg,
+    angleDeg: bearingDeg,
+    signedSide: chosenSide,
+  };
+}
+
+const BARANGAY_BBOX_INDEX = (NAGA_BARANGAYS_GEOJSON?.features || []).map((feat) => {
+  const ring = feat.geometry?.coordinates?.[0] || [];
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const [rLat, rLng] = ring[i];
+    if (rLat < minLat) minLat = rLat;
+    if (rLat > maxLat) maxLat = rLat;
+    if (rLng < minLng) minLng = rLng;
+    if (rLng > maxLng) maxLng = rLng;
+  }
+  return {
+    name: feat.properties?.name || 'Centro',
+    ring,
+    minLat,
+    maxLat,
+    minLng,
+    maxLng,
+  };
+});
+
+function resolveBarangayName(lat, lng) {
+  for (let i = 0; i < BARANGAY_BBOX_INDEX.length; i++) {
+    const b = BARANGAY_BBOX_INDEX[i];
+    if (lat < b.minLat || lat > b.maxLat || lng < b.minLng || lng > b.maxLng) continue;
+    let inside = false;
+    const ring = b.ring;
+    for (let p = 0, q = ring.length - 1; p < ring.length; q = p++) {
+      const [x1, y1] = ring[p];
+      const [x2, y2] = ring[q];
+      if ((y1 > lng) !== (y2 > lng) && lat < ((x2 - x1) * (lng - y1)) / (y2 - y1) + x1) {
+        inside = !inside;
+      }
+    }
+    if (inside) return b.name;
+  }
+  return '';
+}
+
+export function isInsideWaterwayClearance(
+  lat,
+  lng,
+  riverMarginM = MIN_RIVER_CLEARANCE_M,
+  creekMarginM = MIN_CREEK_CLEARANCE_M
+) {
+  for (const poly of [NAGA_RIVER_COORDS, BICOL_RIVER_COORDS]) {
+    for (let i = 0; i < poly.length - 1; i++) {
+      if (
+        pointToSegmentDistanceM(lat, lng, poly[i][0], poly[i][1], poly[i + 1][0], poly[i + 1][1]) <
+        riverMarginM
+      ) {
+        return true;
+      }
+    }
+  }
+  for (let i = 0; i < CONCEPCION_CREEK_COORDS.length - 1; i++) {
+    const a = CONCEPCION_CREEK_COORDS[i];
+    const b = CONCEPCION_CREEK_COORDS[i + 1];
+    if (pointToSegmentDistanceM(lat, lng, a[0], a[1], b[0], b[1]) < creekMarginM) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function spatialHash01(lng, lat, salt = 0) {
+  const x =
+    Math.round(lng * 100000) * 12.9898 +
+    Math.round(lat * 100000) * 78.233 +
+    salt * 43.17;
+  const s = Math.sin(x) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+function computeLotFootprintAreaM2(b) {
+  const w = Number.isFinite(b?.w) && b.w > 0 ? b.w : 0.13;
+  const d = Number.isFinite(b?.d) && b.d > 0 ? b.d : 0.1;
+  const rawPoly =
+    Array.isArray(b?.footprint) && b.footprint.length >= 3
+      ? b.footprint
+      : Array.isArray(b?.parcelPolygon) && b.parcelPolygon.length >= 3
+      ? b.parcelPolygon
+      : null;
+
+  if (!rawPoly) {
+    return Math.max(36, w * d * METERS_PER_BUILDING_UNIT * METERS_PER_BUILDING_UNIT);
+  }
+
+  let doubleArea = 0;
+  for (let i = 0; i < rawPoly.length; i++) {
+    const [x1, y1] = rawPoly[i];
+    const [x2, y2] = rawPoly[(i + 1) % rawPoly.length];
+    doubleArea += x1 * y2 - x2 * y1;
+  }
+  const areaM2 = 0.5 * Math.abs(doubleArea) * METERS_PER_BUILDING_UNIT * METERS_PER_BUILDING_UNIT;
+  return Math.max(36, areaM2);
+}
+
+function hashBuildingFacingQuarter(id, lng, lat) {
   let h = 2166136261;
-  const str = b.id || `${b.lat},${b.lng}`;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
+  const key = String(id || '');
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  return h >>> 0;
+  const idPart = ((h >>> 0) % 10000) / 10000;
+  const coordPart = spatialHash01(lng, lat, 19);
+  const mixed = (idPart * 0.63 + coordPart * 0.37) % 1;
+  return Math.floor(mixed * 4) % 4;
 }
 
-function stampColoredPart(bucket, templateGeo, mat4, colorHex, uvScaleX = 1, uvScaleY = 1) {
-  const g = templateGeo.clone();
-  g.applyMatrix4(mat4);
-  const count = g.attributes.position.count;
-
-  if (uvScaleX !== 1 || uvScaleY !== 1) {
-    const uv = g.attributes.uv;
-    if (uv) {
-      for (let i = 0; i < count; i++) {
-        uv.setXY(i, uv.getX(i) * uvScaleX, uv.getY(i) * uvScaleY);
-      }
-    }
-  }
-
-  const col = new THREE.Color(colorHex);
-  const arr = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    arr[i * 3] = col.r;
-    arr[i * 3 + 1] = col.g;
-    arr[i * 3 + 2] = col.b;
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-
-  for (const attr of Object.keys(g.attributes)) {
-    if (attr !== 'position' && attr !== 'normal' && attr !== 'uv' && attr !== 'color') {
-      g.deleteAttribute(attr);
-    }
-  }
-  bucket.push(g);
+function resolveOrthogonalRoadAngle(lat, lng, id) {
+  const { bearingDeg: nearestMainRoadBearing } = getNearestRoadInfo(lat, lng);
+  const orthoOffsetDeg = hashBuildingFacingQuarter(id, lng, lat) * 90;
+  const snapped = (((nearestMainRoadBearing + orthoOffsetDeg) % 360) + 360) % 360;
+  return Number(snapped.toFixed(1));
 }
 
-const tmpVec = new THREE.Vector3();
-const tmpQuat = new THREE.Quaternion();
-const tmpScale = new THREE.Vector3();
-const tmpLocalMat = new THREE.Matrix4();
-const tmpPartMat = new THREE.Matrix4();
-
-function addLocalBox(bucket, groupMat, lx, ly, lz, sx, sy, sz, colorHex, uvX = 1, uvY = 1) {
-  tmpVec.set(lx, ly, lz);
-  tmpQuat.identity();
-  tmpScale.set(sx, sy, sz);
-  tmpLocalMat.compose(tmpVec, tmpQuat, tmpScale);
-  tmpPartMat.multiplyMatrices(groupMat, tmpLocalMat);
-  stampColoredPart(bucket, UNIT_BOX, tmpPartMat, colorHex, uvX, uvY);
+function classifyUrbanArchetype(areaM2, majorRoadDistM) {
+  if (areaM2 > 500) return 'civic_hall';
+  if (majorRoadDistM <= 40) return 'shophouse_commercial';
+  if (areaM2 > 250) return 'midrise_building';
+  return 'house_residential';
 }
 
-function addLocalCyl(bucket, groupMat, lx, ly, lz, rx, sy, rz, colorHex) {
-  tmpVec.set(lx, ly, lz);
-  tmpQuat.identity();
-  tmpScale.set(rx * 2, sy, rz * 2);
-  tmpLocalMat.compose(tmpVec, tmpQuat, tmpScale);
-  tmpPartMat.multiplyMatrices(groupMat, tmpLocalMat);
-  stampColoredPart(bucket, UNIT_CYL, tmpPartMat, colorHex, 1, 1);
-}
+function computeColossalScaleVec(lng, lat, archetype, aspectBias = 1) {
+  const cfg = ARCHETYPE_CONFIG_BY_KEY[archetype] || ARCHETYPE_CONFIG_BY_KEY.house_residential;
+  const [rawW, , rawD] = cfg.rawBounds.size;
 
-function addLocalRoof(bucket, groupMat, kind, lx, ly, lz, sx, sy, sz, colorHex, rotY = 0) {
-  tmpVec.set(lx, ly, lz);
-  if (rotY !== 0) tmpQuat.setFromAxisAngle(Y_AXIS, rotY);
-  else tmpQuat.identity();
-  tmpScale.set(sx, sy, sz);
-  tmpLocalMat.compose(tmpVec, tmpQuat, tmpScale);
-  tmpPartMat.multiplyMatrices(groupMat, tmpLocalMat);
-  const geo = kind === 'gabled' ? UNIT_GABLE_ROOF : kind === 'shed' ? UNIT_SHED_ROOF : UNIT_HIP_ROOF;
-  stampColoredPart(bucket, geo, tmpPartMat, colorHex, 1.5, 1.5);
-}
+  const macroMult = EXAGGERATION_MULTIPLIER - 13.0 + spatialHash01(lng, lat, 11) * 26.0;
+  const targetSpan = macroMult * COLOSSAL_TOY_BASE_UNIT_M;
+  const heightJitter = 0.90 + spatialHash01(lng, lat, 9) * 0.22;
 
-function addExtrudedPolyPart(bucket, groupMat, pts, yBase, height, scaleXY, colorHex) {
-  const shape = new THREE.Shape();
-  pts.forEach(([px, pz], i) => {
-    if (i === 0) shape.moveTo(px * scaleXY, -pz * scaleXY);
-    else shape.lineTo(px * scaleXY, -pz * scaleXY);
-  });
-  shape.closePath();
-  let geo = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false });
-  geo.rotateX(-Math.PI / 2);
-  geo.translate(0, yBase, 0);
-  if (geo.index) geo = geo.toNonIndexed();
-  geo.computeVertexNormals();
-  stampColoredPart(bucket, geo, groupMat, colorHex, 1.5, 1.5);
-  geo.dispose();
-}
-
-// ============================================================================
-// STAGE 3: HYPERREALISTIC RESIDENTIAL ARCHITECTURAL GENERATORS (6 ARCHETYPES)
-// ============================================================================
-
-function addCompoundFenceAndGate(buckets, groupMat, w, d, wallHex, sideFlip, gateStyle = 0) {
-  const zFront = d * 0.46;
-  const xL = -w * 0.46;
-  const xR = w * 0.46;
-  const gateCx = sideFlip * w * 0.16;
-  const gateHalf = w * 0.14;
-  const postH = 0.022;
-  const wallH = 0.015;
-  const pierHex = '#D6D0C4';
-
-  // Left and right front wall wings leaving gate gap cleanly open
-  const gLeft = gateCx - gateHalf;
-  const gRight = gateCx + gateHalf;
-  const lenL = Math.max(0.008, gLeft - xL);
-  const lenR = Math.max(0.008, xR - gRight);
-  if (lenL > 0.010) {
-    addLocalBox(buckets.stoneBrick, groupMat, (xL + gLeft) * 0.5, wallH * 0.5 + 0.004, zFront, lenL, wallH, 0.007, wallHex, 1.4, 0.7);
-    addLocalBox(buckets.trim, groupMat, (xL + gLeft) * 0.5, wallH + 0.005, zFront, lenL + 0.002, 0.0025, 0.009, '#94A3B8');
-  }
-  if (lenR > 0.010) {
-    addLocalBox(buckets.stoneBrick, groupMat, (gRight + xR) * 0.5, wallH * 0.5 + 0.004, zFront, lenR, wallH, 0.007, wallHex, 1.4, 0.7);
-    addLocalBox(buckets.trim, groupMat, (gRight + xR) * 0.5, wallH + 0.005, zFront, lenR + 0.002, 0.0025, 0.009, '#94A3B8');
-  }
-
-  // Gate masonry pillars + caps
-  addLocalBox(buckets.stoneBrick, groupMat, gLeft, postH * 0.5 + 0.004, zFront, 0.009, postH, 0.009, pierHex);
-  addLocalBox(buckets.stoneBrick, groupMat, gRight, postH * 0.5 + 0.004, zFront, 0.009, postH, 0.009, pierHex);
-  addLocalBox(buckets.accent, groupMat, gLeft, postH + 0.005, zFront, 0.012, 0.003, 0.012, '#64748B');
-  addLocalBox(buckets.accent, groupMat, gRight, postH + 0.005, zFront, 0.012, 0.003, 0.012, '#64748B');
-
-  // Corner fence posts & short side return walls
-  addLocalBox(buckets.stoneBrick, groupMat, xL, wallH * 0.5 + 0.004, zFront - d * 0.14, 0.006, wallH, d * 0.28, wallHex, 1, 0.6);
-  addLocalBox(buckets.stoneBrick, groupMat, xR, wallH * 0.5 + 0.004, zFront - d * 0.14, 0.006, wallH, d * 0.28, wallHex, 1, 0.6);
-
-  // Steel-or-timber slatted residential gate
-  const gateBucket = gateStyle === 0 ? buckets.woodCanopy : buckets.trim;
-  const gateHex = gateStyle === 0 ? '#8C5835' : '#334155';
-  addLocalBox(gateBucket, groupMat, gateCx, 0.014, zFront, gateHalf * 1.85, 0.016, 0.0035, gateHex);
-  addLocalBox(buckets.trim, groupMat, gateCx, 0.022, zFront, gateHalf * 1.9, 0.0025, 0.0045, '#1E293B');
-}
-
-function addResidentialWindow(buckets, groupMat, wx, wy, wz, ww, wh, dirZ, opts = {}) {
-  const { frameHex = '#E2E8F0', hoodHex = null, shutterHex = null, hasSill = true, hasAC = false, hasRail = false } = opts;
-  const dz = dirZ >= 0 ? 1 : -1;
-  // Recessed dark reflective glass pane
-  addLocalBox(buckets.glass, groupMat, wx, wy, wz + dz * 0.001, ww, wh, 0.003, '#9EBAD0');
-  // Exterior sill & frame header
-  if (hasSill) {
-    addLocalBox(buckets.trim, groupMat, wx, wy - wh * 0.53, wz + dz * 0.0035, ww * 1.14, 0.0032, 0.006, frameHex);
-  }
-  addLocalBox(buckets.trim, groupMat, wx, wy, wz + dz * 0.0022, 0.0022, wh, 0.0022, '#475569'); // center mullion
-  if (hoodHex) {
-    addLocalBox(buckets.accent, groupMat, wx, wy + wh * 0.55, wz + dz * 0.005, ww * 1.18, 0.0035, 0.009, hoodHex);
-  }
-  if (shutterHex) {
-    addLocalBox(buckets.woodCanopy, groupMat, wx - ww * 0.64, wy, wz + dz * 0.0025, ww * 0.26, wh * 1.02, 0.003, shutterHex);
-    addLocalBox(buckets.woodCanopy, groupMat, wx + ww * 0.64, wy, wz + dz * 0.0025, ww * 0.26, wh * 1.02, 0.003, shutterHex);
-  }
-  if (hasRail) {
-    addLocalBox(buckets.trim, groupMat, wx, wy - wh * 0.26, wz + dz * 0.005, ww * 1.05, 0.0025, 0.002, '#1E293B');
-    addLocalBox(buckets.trim, groupMat, wx, wy - wh * 0.42, wz + dz * 0.004, ww * 1.05, 0.002, 0.004, '#1E293B');
-  }
-  if (hasAC) {
-    addLocalBox(buckets.trim, groupMat, wx + ww * 0.65, wy - wh * 0.38, wz + dz * 0.006, 0.011, 0.0085, 0.008, '#D8DEE6');
-    addLocalBox(buckets.trim, groupMat, wx + ww * 0.65, wy - wh * 0.38, wz + dz * 0.0102, 0.007, 0.0055, 0.001, '#334155');
-  }
-}
-
-function appendStage3Residential(buckets, b, groupMat) {
-  const { w, d, h } = b;
-  const hsh = hashBuilding(b);
-  const sideFlip = hsh % 2 === 0 ? 1 : -1;
-  const levels = Math.max(1, b.levels || 1);
-  // Gracefully map 1F multi-family styles to authentic Filipino village / courtyard houses
-  let style = b.archStyle !== undefined ? b.archStyle % 6 : hsh % 6;
-  if (levels === 1 && (style === 3 || style === 5)) {
-    style = hsh % 3 === 0 ? 4 : 1;
-  }
-
-  const wallHex = WALL_PALETTE[b.tone] || '#EFE7D4';
-  const roofHex = b.roofColor || '#8C4332';
-  const accentHex = b.accentColor || '#25638A';
-  const roofH = Math.max(0.030, Math.min(0.062, Math.min(w, d) * 0.36));
-
-  // Sub-terrain slope skirt + parcel yard slab strictly within OBB [w, d]
-  addLocalBox(buckets.foundation, groupMat, 0, -0.17, 0, w * 0.94, 0.34, d * 0.94, '#ABB4BF');
-  addLocalBox(buckets.foundation, groupMat, 0, 0.004, 0, w * 0.98, 0.008, d * 0.98, '#CBD3DC', 1.4, 1.4);
-
-  // -------------------------------------------------------------------------
-  // ARCH 3: 1:1 Cream & Ochre Banded Mid-Rise Walk-Up Apartment (08a047f0 / 79fcde68)
-  // -------------------------------------------------------------------------
-  if (style === 3) {
-    const bw = w * 0.88;
-    const bd = d * 0.84;
-    const groundH = Math.min(0.068, h / levels);
-    const upperCount = Math.max(1, levels - 1);
-    const storyH = (h - groundH) / upperCount;
-    const creamHex = '#EFE7D2';
-    const ochreHex = hsh % 3 === 0 ? '#C8B994' : '#D9C38F';
-    const awningHues = ['#4C749E', '#B55B45', '#647C6E', '#8F7A52'];
-
-    // Ground floor masonry shop/lobby base + dark storefront glazing + entry awning
-    addLocalBox(buckets.stoneBrick, groupMat, 0, groundH * 0.5 + 0.008, 0, bw, groundH, bd, '#B4ABA0', 2, 1);
-    addLocalBox(buckets.glass, groupMat, 0, groundH * 0.42 + 0.008, bd * 0.502, bw * 0.80, groundH * 0.62, 0.005, '#7FA2BD');
-    addLocalBox(buckets.accent, groupMat, 0, groundH + 0.011, 0, bw * 1.04, 0.009, bd * 1.04, '#E5DEC9');
-    // Ground commercial shop canopy & subtle signboard frieze
-    addLocalBox(buckets.accent, groupMat, 0, groundH * 0.82 + 0.008, bd * 0.54, bw * 0.88, 0.006, 0.022, accentHex);
-    addLocalBox(buckets.trim, groupMat, -sideFlip * bw * 0.18, groundH * 0.94 + 0.008, bd * 0.515, bw * 0.42, 0.011, 0.006, awningHues[hsh % 2]);
-
-    // Upper stacked apartment floors with alternating cream / ochre signature bands
-    const cols = bw > 0.125 ? 4 : 3;
-    for (let u = 0; u < upperCount; u++) {
-      const yBot = 0.008 + groundH + u * storyH;
-      // Alternating cream upper band & warm ochre lower spandrel band per story
-      addLocalBox(buckets.masonry, groupMat, 0, yBot + storyH * 0.23, 0, bw, storyH * 0.46, bd, ochreHex, 2, 1);
-      addLocalBox(buckets.masonry, groupMat, 0, yBot + storyH * 0.73, 0, bw, storyH * 0.54, bd, creamHex, 2, 1);
-
-      // Cantilevered wrap/corner balcony bay on alternating side
-      const balX = sideFlip * bw * 0.25;
-      const balW = bw * 0.42;
-      addLocalBox(buckets.accent, groupMat, balX, yBot + 0.004, bd * 0.5 + 0.009, balW, 0.006, 0.020, creamHex);
-      addLocalBox(buckets.masonry, groupMat, balX, yBot + storyH * 0.21, bd * 0.5 + 0.017, balW, storyH * 0.30, 0.004, ochreHex);
-      addLocalBox(buckets.trim, groupMat, balX, yBot + storyH * 0.38, bd * 0.5 + 0.018, balW, 0.003, 0.003, '#475569');
-
-      // Window array + small rain canopies + exterior AC units
-      for (let c = 0; c < cols; c++) {
-        const wx = ((c + 0.5) / cols - 0.5) * (bw * 0.82);
-        const ww = bw * 0.14;
-        const wh = storyH * 0.42;
-        const hood = (c + u) % 2 === 0 ? awningHues[(c + u + hsh) % awningHues.length] : '#E2E8F0';
-        addResidentialWindow(buckets, groupMat, wx, yBot + storyH * 0.60, bd * 0.5, ww, wh, 1, {
-          hoodHex: hood,
-          hasAC: (c + u) % 3 === 1,
-        });
-        addResidentialWindow(buckets, groupMat, wx, yBot + storyH * 0.60, -bd * 0.5, ww, wh, -1, { hoodHex: '#CBD5E1' });
-      }
-      // Side elevation windows
-      for (const sx of [-1, 1]) {
-        addLocalBox(buckets.glass, groupMat, sx * bw * 0.502, yBot + storyH * 0.60, 0, 0.004, storyH * 0.38, bd * 0.42, '#92B0C7');
-      }
-    }
-
-    // Authentic 08a047f0 flat roof: parapet coping + stairwell bulkhead + tanks + antenna
-    const roofY = 0.008 + h;
-    addLocalBox(buckets.masonry, groupMat, 0, roofY + 0.006, bd * 0.48, bw, 0.012, 0.006, creamHex);
-    addLocalBox(buckets.masonry, groupMat, 0, roofY + 0.006, -bd * 0.48, bw, 0.012, 0.006, creamHex);
-    addLocalBox(buckets.masonry, groupMat, -bw * 0.48, roofY + 0.006, 0, 0.006, 0.012, bd, creamHex);
-    addLocalBox(buckets.masonry, groupMat, bw * 0.48, roofY + 0.006, 0, 0.006, 0.012, bd, creamHex);
-    addLocalBox(buckets.roof, groupMat, 0, roofY + 0.003, 0, bw * 0.94, 0.006, bd * 0.94, '#6E747C');
-    // Stairwell penthouse bulkhead + curved top cap + rooftop tanks
-    addLocalBox(buckets.masonry, groupMat, -sideFlip * bw * 0.16, roofY + 0.018, -bd * 0.10, bw * 0.34, 0.028, bd * 0.32, creamHex);
-    addLocalBox(buckets.roof, groupMat, -sideFlip * bw * 0.16, roofY + 0.034, -bd * 0.10, bw * 0.38, 0.005, bd * 0.36, '#525C68');
-    addLocalCyl(buckets.trim, groupMat, sideFlip * bw * 0.24, roofY + 0.015, bd * 0.16, 0.009, 0.018, 0.009, '#94A3B8');
-    addLocalBox(buckets.trim, groupMat, -sideFlip * bw * 0.16, roofY + 0.048, -bd * 0.10, 0.0025, 0.026, 0.0025, '#334155');
-    return;
-  }
-
-  // -------------------------------------------------------------------------
-  // ARCH 2: Poblacion Heritage Shophouse / Bahay-na-Bato (11bb784c + Bicol heritage)
-  // -------------------------------------------------------------------------
-  if (style === 2) {
-    const bw = w * 0.84;
-    const bd = d * 0.80;
-    const groundH = levels >= 2 ? h * 0.46 : h;
-    const upperH = Math.max(0, h - groundH);
-
-    // Stone zocalo base + 3-pier front arcade
-    addLocalBox(buckets.stoneBrick, groupMat, 0, groundH * 0.5 + 0.008, -bd * 0.04, bw * 0.96, groundH, bd * 0.88, '#C8BFB2', 2, 1.2);
-    for (const px of [-bw * 0.42, 0, bw * 0.42]) {
-      addLocalBox(buckets.stoneBrick, groupMat, px, groundH * 0.5 + 0.008, bd * 0.46, 0.011, groundH, 0.012, '#B6AC9E');
-    }
-    // Glazed ground doors & striped porch/shop canopy
-    addLocalBox(buckets.glass, groupMat, -bw * 0.21, groundH * 0.42 + 0.008, bd * 0.41, bw * 0.24, groundH * 0.72, 0.005, '#7B9AB4');
-    addLocalBox(buckets.woodCanopy, groupMat, bw * 0.21, groundH * 0.40 + 0.008, bd * 0.41, bw * 0.22, groundH * 0.68, 0.005, '#6B4226');
-    addLocalBox(buckets.woodCanopy, groupMat, 0, groundH * 0.86 + 0.008, bd * 0.50, bw * 0.92, 0.008, 0.022, '#9E4B38');
-
-    // Cantilevered upper wooden/plaster volada volume
-    if (upperH > 0.01) {
-      addLocalBox(buckets.masonry, groupMat, 0, groundH + upperH * 0.5 + 0.008, 0, bw * 1.03, upperH, bd * 1.02, wallHex, 1.8, 1);
-      addLocalBox(buckets.woodCanopy, groupMat, 0, groundH + 0.010, 0, bw * 1.06, 0.008, bd * 1.05, '#5C3A21');
-      addLocalBox(buckets.woodCanopy, groupMat, 0, h + 0.006, 0, bw * 1.07, 0.006, bd * 1.06, '#5C3A21');
-      // Corner pilasters
-      for (const cx of [-bw * 0.50, bw * 0.50]) {
-        addLocalBox(buckets.woodCanopy, groupMat, cx, groundH + upperH * 0.5 + 0.008, bd * 0.50, 0.009, upperH, 0.008, '#5C3A21');
-      }
-      const cols = bw > 0.13 ? 3 : 2;
-      for (let c = 0; c < cols; c++) {
-        const wx = ((c + 0.5) / cols - 0.5) * (bw * 0.76);
-        addResidentialWindow(buckets, groupMat, wx, groundH + upperH * 0.52 + 0.008, bd * 0.51, bw * 0.15, upperH * 0.54, 1, {
-          shutterHex: '#5C3A21',
-          frameHex: '#EFE7D4',
-          hasAC: c === 0 && (hsh % 2 === 0),
-        });
-        addResidentialWindow(buckets, groupMat, wx, groundH + upperH * 0.52 + 0.008, -bd * 0.51, bw * 0.15, upperH * 0.54, -1, {
-          shutterHex: '#5C3A21',
-        });
-      }
-    } else {
-      for (const wx of [-bw * 0.21, bw * 0.21]) {
-        addResidentialWindow(buckets, groupMat, wx, groundH * 0.55 + 0.008, -bd * 0.48, bw * 0.16, groundH * 0.44, -1, { shutterHex: '#5C3A21' });
-      }
-    }
-
-    const rotY = bd > bw ? Math.PI * 0.5 : 0;
-    const rx = rotY === 0 ? bw * 1.14 : bd * 1.14;
-    const rz = rotY === 0 ? bd * 1.14 : bw * 1.14;
-    addLocalRoof(buckets.roof, groupMat, 'hipped', 0, h + 0.008, 0, rx, roofH, rz, roofHex, rotY);
-    addLocalBox(buckets.trim, groupMat, 0, h + 0.008 + roofH, 0, rotY === 0 ? rx * 0.48 : 0.007, 0.005, rotY === 0 ? 0.007 : rx * 0.48, '#5C3A21');
-    return;
-  }
-
-  // -------------------------------------------------------------------------
-  // ARCH 5: Poblacion Brick & Stucco Walk-Up Townhouse (11bb784c adapted to Naga)
-  // -------------------------------------------------------------------------
-  if (style === 5) {
-    const bw = w * 0.86;
-    const bd = d * 0.82;
-    const storyH = h / levels;
-    const brickTones = ['#A65642', '#B56E53', '#8B624E', '#627B78'];
-    const upperBrick = brickTones[hsh % brickTones.length];
-    const quoinHex = '#E8DFCF';
-
-    // Rusticated stone base floor
-    addLocalBox(buckets.stoneBrick, groupMat, 0, storyH * 0.5 + 0.008, 0, bw * 1.01, storyH, bd * 1.01, '#8D867C', 2, 1);
-    addLocalBox(buckets.glass, groupMat, -sideFlip * bw * 0.14, storyH * 0.42 + 0.008, bd * 0.506, bw * 0.42, storyH * 0.66, 0.004, '#8BA9C2');
-    addLocalBox(buckets.woodCanopy, groupMat, sideFlip * bw * 0.25, storyH * 0.40 + 0.008, bd * 0.506, bw * 0.18, storyH * 0.66, 0.004, '#4B2E1B');
-    addLocalBox(buckets.woodCanopy, groupMat, 0, storyH * 0.88 + 0.008, bd * 0.54, bw * 0.88, 0.007, 0.020, '#8C382A');
-
-    // Upper brick/masonry storeys + corner pale stone quoins + belt courses
-    const upH = Math.max(0.05, h - storyH);
-    addLocalBox(buckets.stoneBrick, groupMat, 0, 0.008 + storyH + upH * 0.5, 0, bw, upH, bd, upperBrick, 2.2, 2);
-    for (const qx of [-bw * 0.49, bw * 0.49]) {
-      for (const qz of [-bd * 0.49, bd * 0.49]) {
-        addLocalBox(buckets.masonry, groupMat, qx, 0.008 + storyH + upH * 0.5, qz, 0.011, upH, 0.011, quoinHex);
-      }
-    }
-
-    const cols = bw > 0.13 ? 3 : 2;
-    for (let lv = 1; lv < levels; lv++) {
-      const yB = 0.008 + lv * storyH;
-      addLocalBox(buckets.masonry, groupMat, 0, yB, 0, bw * 1.03, 0.007, bd * 1.03, quoinHex);
-      for (let c = 0; c < cols; c++) {
-        const wx = ((c + 0.5) / cols - 0.5) * (bw * 0.74);
-        addResidentialWindow(buckets, groupMat, wx, yB + storyH * 0.54, bd * 0.5, bw * 0.16, storyH * 0.48, 1, {
-          frameHex: quoinHex,
-          hoodHex: quoinHex,
-          hasRail: true,
-          hasAC: c === cols - 1 && lv === 1,
-        });
-        addResidentialWindow(buckets, groupMat, wx, yB + storyH * 0.54, -bd * 0.5, bw * 0.16, storyH * 0.48, -1, {
-          frameHex: quoinHex,
-        });
-      }
-    }
-
-    // Crown cornice + parapet terrace + skylight + water tank
-    const roofY = 0.008 + h;
-    addLocalBox(buckets.masonry, groupMat, 0, roofY + 0.005, 0, bw * 1.06, 0.010, bd * 1.06, quoinHex);
-    addLocalBox(buckets.roof, groupMat, 0, roofY + 0.012, 0, bw * 0.96, 0.010, bd * 0.96, roofHex);
-    addLocalBox(buckets.glass, groupMat, -sideFlip * bw * 0.16, roofY + 0.022, 0, bw * 0.24, 0.012, bd * 0.26, '#90B2CA');
-    addLocalBox(buckets.trim, groupMat, sideFlip * bw * 0.20, roofY + 0.021, -bd * 0.14, 0.018, 0.014, 0.016, '#94A3B8');
-    return;
-  }
-
-  // -------------------------------------------------------------------------
-  // ARCH 4: Courtyard L-Wing Residence w/ Garden Colonnade & Dual Hipped Roofs
-  // -------------------------------------------------------------------------
-  if (style === 4) {
-    addCompoundFenceAndGate(buckets, groupMat, w, d, wallHex, sideFlip, 0);
-    const bw = w * 0.86;
-    const bd = d * 0.78;
-    const mainD = bd * 0.54;
-    const mainZ = -bd * 0.20;
-    const wingW = bw * 0.42;
-    const wingX = sideFlip * (bw * 0.5 - wingW * 0.5);
-    const wingD = bd * 0.48;
-    const wingZ = bd * 0.18;
-    const wingH = Math.max(0.055, h * (levels >= 2 ? 0.62 : 0.86));
-
-    // Rear main 2F wing + stone base + windows + hipped roof
-    addLocalBox(buckets.stoneBrick, groupMat, 0, 0.014, mainZ, bw * 1.01, 0.016, mainD * 1.01, '#9BA3AD');
-    addLocalBox(buckets.masonry, groupMat, 0, h * 0.5 + 0.008, mainZ, bw, h, mainD, wallHex, 1.8, 1.2);
-    // Side L-wing projecting forward
-    addLocalBox(buckets.stoneBrick, groupMat, wingX, 0.014, wingZ, wingW * 1.01, 0.016, wingD * 1.01, '#9BA3AD');
-    addLocalBox(buckets.masonry, groupMat, wingX, wingH * 0.5 + 0.008, wingZ, wingW, wingH, wingD, wallHex, 1.2, 1);
-
-    // Courtyard colonnade + flat garden veranda canopy beside L-wing
-    const porchX = -sideFlip * bw * 0.22;
-    addLocalBox(buckets.woodCanopy, groupMat, porchX, Math.min(0.056, h * 0.65) + 0.008, bd * 0.14, bw * 0.48, 0.006, wingD * 0.55, '#6B4226');
-    for (const colOffset of [-bw * 0.16, bw * 0.12]) {
-      addLocalBox(buckets.masonry, groupMat, porchX + colOffset, Math.min(0.056, h * 0.65) * 0.5 + 0.008, bd * 0.26, 0.008, Math.min(0.056, h * 0.65), 0.008, '#F1EDE4');
-    }
-
-    // Windows on rear main & front L-wing facades
-    const storyH = h / levels;
-    for (let lv = 0; lv < levels; lv++) {
-      const wy = 0.008 + (lv + 0.54) * storyH;
-      addResidentialWindow(buckets, groupMat, -sideFlip * bw * 0.24, wy, mainZ + mainD * 0.5, bw * 0.16, storyH * 0.44, 1, {
-        hoodHex: accentHex,
-        hasAC: lv === 0,
-      });
-      addResidentialWindow(buckets, groupMat, 0, wy, mainZ - mainD * 0.5, bw * 0.22, storyH * 0.44, -1, { hoodHex: '#CBD5E1' });
-    }
-    addResidentialWindow(buckets, groupMat, wingX, wingH * 0.52 + 0.008, wingZ + wingD * 0.5, wingW * 0.46, wingH * 0.42, 1, {
-      hoodHex: accentHex,
-    });
-
-    // Dual interlocking hipped roofs
-    addLocalRoof(buckets.roof, groupMat, 'hipped', 0, h + 0.008, mainZ, bw * 1.10, roofH, mainD * 1.14, roofHex, 0);
-    addLocalRoof(buckets.roof, groupMat, 'hipped', wingX, wingH + 0.008, wingZ, wingW * 1.12, roofH * 0.72, wingD * 1.12, roofHex, Math.PI * 0.5);
-    return;
-  }
-
-  // -------------------------------------------------------------------------
-  // ARCH 1: Filipino Village Barangay House w/ Stepped Firewalls & Water Tank (ba621f1e)
-  // -------------------------------------------------------------------------
-  if (style === 1) {
-    addCompoundFenceAndGate(buckets, groupMat, w, d, wallHex, sideFlip, 1);
-    const mainW = w * 0.58;
-    const mainX = -sideFlip * w * 0.13;
-    const mainD = d * 0.68;
-    const mainZ = -d * 0.06;
-    const wingW = w * 0.28;
-    const wingX = sideFlip * (w * 0.58 * 0.5 + wingW * 0.5 - w * 0.12);
-    const wingH = Math.max(0.044, h * 0.64);
-    const metalRoofTones = ['#5A6A78', '#4F6572', '#7C4332', '#64726A'];
-    const vRoofHex = metalRoofTones[hsh % metalRoofTones.length];
-
-    // Main block with stone hollow-block base wainscot
-    addLocalBox(buckets.stoneBrick, groupMat, mainX, 0.018, mainZ, mainW * 1.01, 0.022, mainD * 1.01, '#8C949E', 2, 0.8);
-    addLocalBox(buckets.masonry, groupMat, mainX, h * 0.5 + 0.008, mainZ, mainW, h, mainD, wallHex, 1.5, 1.2);
-
-    // Adjacent lower side annex wing (mono-pitch shed or flat concrete terrace + rooftop water tank)
-    addLocalBox(buckets.masonry, groupMat, wingX, wingH * 0.5 + 0.008, mainZ - 0.005, wingW, wingH, mainD * 0.84, '#DCDAD2', 1, 1);
-    if (hsh % 2 === 0) {
-      addLocalBox(buckets.accent, groupMat, wingX, wingH + 0.012, mainZ - 0.005, wingW * 1.06, 0.008, mainD * 0.88, '#94A3B8');
-      // ba621f1e rooftop cylindrical water tank on steel legs
-      addLocalCyl(buckets.trim, groupMat, wingX, wingH + 0.027, mainZ - 0.005, 0.011, 0.022, 0.011, (hsh % 3 === 0) ? '#2B7AC4' : '#B8C4D0');
-    } else {
-      addLocalRoof(buckets.roof, groupMat, 'shed', wingX, wingH + 0.008, mainZ - 0.005, wingW * 1.08, roofH * 0.45, mainD * 0.92, vRoofHex, 0);
-    }
-
-    // Stepped plastered firewall gable parapets framing ends of main roof (ba621f1e look)
-    const wallEndH = roofH * 0.92;
-    for (const gx of [mainX - mainW * 0.49, mainX + mainW * 0.49]) {
-      addLocalBox(buckets.masonry, groupMat, gx, h + 0.008 + wallEndH * 0.42, mainZ, 0.008, wallEndH * 0.84, mainD * 0.84, wallHex);
-    }
-    addLocalRoof(buckets.roof, groupMat, 'gabled', mainX, h + 0.008, mainZ, mainW * 1.06, roofH, mainD * 1.10, vRoofHex, 0);
-
-    // Shaded ground entry awning + 2 steel support posts + casement windows w/ canopies
-    addLocalBox(buckets.woodCanopy, groupMat, mainX, Math.min(0.048, h * 0.72) + 0.008, mainZ + mainD * 0.5 + 0.010, mainW * 0.76, 0.005, 0.022, accentHex);
-    for (const px of [mainX - mainW * 0.30, mainX + mainW * 0.30]) {
-      addLocalBox(buckets.trim, groupMat, px, Math.min(0.048, h * 0.72) * 0.5 + 0.008, mainZ + mainD * 0.5 + 0.018, 0.004, Math.min(0.048, h * 0.72), 0.004, '#475569');
-    }
-    const storyH = h / levels;
-    for (let lv = 0; lv < levels; lv++) {
-      const wy = 0.008 + (lv + 0.52) * storyH;
-      addResidentialWindow(buckets, groupMat, mainX - mainW * 0.22, wy, mainZ + mainD * 0.5, mainW * 0.22, storyH * 0.42, 1, {
-        hoodHex: accentHex,
-        hasAC: lv === levels - 1,
-      });
-      addResidentialWindow(buckets, groupMat, mainX + mainW * 0.22, wy, mainZ + mainD * 0.5, mainW * 0.22, storyH * 0.42, 1, {
-        hoodHex: '#64748B',
-      });
-    }
-    return;
-  }
-
-  // -------------------------------------------------------------------------
-  // ARCH 0 (default): Contemporary Tropical 2F Villa (cantilever + glass balcony + timber louvers)
-  // -------------------------------------------------------------------------
-  addCompoundFenceAndGate(buckets, groupMat, w, d, wallHex, sideFlip, hsh % 2);
-  const bw = w * 0.84;
-  const bd = d * 0.74;
-  const baseZ = -d * 0.05;
-  const groundH = levels >= 2 ? h * 0.48 : h;
-  const upperH = Math.max(0, h - groundH);
-
-  // Ground storey shifted away from carport bay on sideFlip
-  const coreW = levels >= 2 ? bw * 0.68 : bw;
-  const coreX = levels >= 2 ? -sideFlip * bw * 0.16 : 0;
-  addLocalBox(buckets.stoneBrick, groupMat, coreX, 0.017, baseZ, coreW * 1.01, 0.020, bd * 0.94, '#94A3B8', 2, 0.8);
-  addLocalBox(buckets.masonry, groupMat, coreX, groundH * 0.5 + 0.008, baseZ, coreW, groundH, bd * 0.92, wallHex, 1.6, 1.1);
-  // Warm hardwood entry door + concrete stoop
-  addLocalBox(buckets.woodCanopy, groupMat, coreX + sideFlip * coreW * 0.22, 0.024, baseZ + bd * 0.465, coreW * 0.22, 0.032, 0.005, '#7C4A27');
-
-  // Carport porch columns on sideFlip if 2F
-  if (levels >= 2) {
-    const colX = sideFlip * bw * 0.44;
-    addLocalBox(buckets.masonry, groupMat, colX, groundH * 0.5 + 0.008, baseZ + bd * 0.40, 0.009, groundH, 0.009, '#F1EDE4');
-    addLocalBox(buckets.masonry, groupMat, colX, groundH * 0.5 + 0.008, baseZ - bd * 0.36, 0.009, groundH, 0.009, '#F1EDE4');
-
-    // Cantilevered upper box overhanging carport & entry
-    addLocalBox(buckets.masonry, groupMat, 0, 0.008 + groundH + upperH * 0.5, baseZ + 0.004, bw * 1.03, upperH, bd * 1.02, wallHex, 1.8, 1.2);
-    // Floor slab reveal + decorative timber louver screen on upper corner
-    addLocalBox(buckets.accent, groupMat, 0, 0.008 + groundH, baseZ + 0.004, bw * 1.05, 0.008, bd * 1.05, accentHex);
-    addLocalBox(buckets.woodCanopy, groupMat, -sideFlip * bw * 0.34, 0.008 + groundH + upperH * 0.5, baseZ + bd * 0.52, bw * 0.24, upperH * 0.84, 0.005, '#8A5A36');
-
-    // Recessed glass balcony over carport with dark rail & frosted/tinted glass parapet
-    const balX = sideFlip * bw * 0.24;
-    addLocalBox(buckets.glass, groupMat, balX, 0.008 + groundH + 0.012, baseZ + bd * 0.525, bw * 0.40, 0.015, 0.004, '#92B8D4');
-    addLocalBox(buckets.trim, groupMat, balX, 0.008 + groundH + 0.021, baseZ + bd * 0.526, bw * 0.41, 0.003, 0.005, '#1E293B');
-
-    // Upper & rear casement windows + exterior AC unit on side wall
-    addResidentialWindow(buckets, groupMat, balX, 0.008 + groundH + upperH * 0.58, baseZ + bd * 0.515, bw * 0.26, upperH * 0.50, 1, {
-      hoodHex: '#E2E8F0',
-    });
-    addResidentialWindow(buckets, groupMat, 0, 0.008 + groundH + upperH * 0.54, baseZ - bd * 0.505, bw * 0.42, upperH * 0.44, -1, {
-      hoodHex: '#CBD5E1',
-      hasAC: true,
-    });
+  let scx;
+  let scy;
+  let scz;
+  if (archetype === 'house_residential') {
+    scx = Math.min(39.0, Math.max(32.5, targetSpan / (rawW * aspectBias)));
+    scz = Math.min(29.8, Math.max(25.0, (targetSpan * aspectBias) / rawD));
+    scy = Math.max(27.5, ((scx + scz) * 0.5) * 0.96 * heightJitter);
+  } else if (archetype === 'shophouse_commercial') {
+    scx = Math.min(29.6, Math.max(24.8, (targetSpan * 0.98) / (rawW * aspectBias)));
+    scz = Math.min(27.4, Math.max(22.8, (targetSpan * 0.97 * aspectBias) / rawD));
+    scy = Math.max(20.0, ((scx + scz) * 0.5) * 0.90 * heightJitter);
+  } else if (archetype === 'midrise_building') {
+    scx = Math.min(24.6, Math.max(20.5, (targetSpan * 0.98) / (rawW * aspectBias)));
+    scz = Math.min(19.4, Math.max(16.2, (targetSpan * 0.98 * aspectBias) / rawD));
+    scy = Math.max(15.2, ((scx + scz) * 0.5) * 0.88 * heightJitter);
   } else {
-    addResidentialWindow(buckets, groupMat, -coreW * 0.22, groundH * 0.56 + 0.008, baseZ + bd * 0.46, coreW * 0.22, groundH * 0.42, 1, {
-      hoodHex: accentHex,
-      hasAC: true,
+    scx = Math.min(15.0, Math.max(12.6, (targetSpan * 1.01) / (rawW * aspectBias)));
+    scz = Math.min(13.8, Math.max(11.6, (targetSpan * 1.01 * aspectBias) / rawD));
+    scy = Math.max(11.5, ((scx + scz) * 0.5) * 0.96 * heightJitter);
+  }
+
+  return [Number(scx.toFixed(3)), Number(scy.toFixed(3)), Number(scz.toFixed(3))];
+}
+
+// Snug SimCity lot proportions so concrete/grass pads hug building bases cleanly
+function computeSimCityLotSpec(archetype) {
+  const cfg = ARCHETYPE_CONFIG_BY_KEY[archetype] || ARCHETYPE_CONFIG_BY_KEY.house_residential;
+  const [rawX, , rawZ] = cfg.rawBounds.size;
+
+  if (archetype === 'shophouse_commercial') {
+    const sx = 7.0;
+    const sy = 12.2;
+    const sz = 7.0;
+    const buildingWidthM = Number((rawX * sx).toFixed(1));
+    const buildingDepthM = Number((rawZ * sz).toFixed(1));
+    return {
+      scaleVec: [sx, sy, sz],
+      buildingWidthM,
+      buildingDepthM,
+      lotWidthM: Number((buildingWidthM + 1.0).toFixed(1)),
+      lotDepthM: Number((buildingDepthM + 1.0).toFixed(1)),
+    };
+  }
+
+  if (archetype === 'midrise_building') {
+    const sx = 8.2;
+    const sy = 12.2;
+    const sz = 8.2;
+    const buildingDepthM = Number((rawX * sx).toFixed(1));
+    const buildingWidthM = Number((rawZ * sz).toFixed(1));
+    return {
+      scaleVec: [sx, sy, sz],
+      buildingWidthM,
+      buildingDepthM,
+      lotWidthM: Number((buildingWidthM + 1.4).toFixed(1)),
+      lotDepthM: Number((buildingDepthM + 1.4).toFixed(1)),
+    };
+  }
+
+  const sx = 12.2;
+  const sy = 12.6;
+  const sz = 12.2;
+  const buildingDepthM = Number((rawX * sx).toFixed(1));
+  const buildingWidthM = Number((rawZ * sz).toFixed(1));
+  return {
+    scaleVec: [sx, sy, sz],
+    buildingWidthM,
+    buildingDepthM,
+    lotWidthM: Number((buildingWidthM + 1.5).toFixed(1)),
+    lotDepthM: Number((buildingDepthM + 1.5).toFixed(1)),
+  };
+}
+
+function computeStreetFacingYawDeg(archetype, faceBearingDeg) {
+  let frontAxisOffset = 270;
+  if (archetype === 'shophouse_commercial') {
+    frontAxisOffset = 180;
+  } else if (archetype === 'midrise_building') {
+    frontAxisOffset = 90;
+  }
+  return Number((((frontAxisOffset - faceBearingDeg) % 360 + 360) % 360).toFixed(1));
+}
+
+function buildOrientedRectRingLngLat(centerLng, centerLat, alongUx, alongUy, faceFx, faceFy, widthM, depthM, frontBiasM = 0) {
+  const halfW = widthM * 0.5;
+  const frontD = depthM * 0.5 + frontBiasM;
+  const backD = depthM * 0.5 - frontBiasM;
+
+  const toLngLat = (alongM, forwardM) => [
+    Number((centerLng + (alongUx * alongM + faceFx * forwardM) / METERS_PER_DEG_LNG).toFixed(6)),
+    Number((centerLat + (alongUy * alongM + faceFy * forwardM) / METERS_PER_DEG_LAT).toFixed(6)),
+  ];
+
+  const p0 = toLngLat(-halfW, frontD);
+  const p1 = toLngLat(halfW, frontD);
+  const p2 = toLngLat(halfW, -backD);
+  const p3 = toLngLat(-halfW, -backD);
+  return [p0, p1, p2, p3, p0];
+}
+
+function buildLotSamplePointsLngLat(centerLng, centerLat, alongUx, alongUy, faceFx, faceFy, widthM, depthM, frontBiasM = 0) {
+  const halfW = widthM * 0.5;
+  const frontD = depthM * 0.5 + frontBiasM;
+  const backD = depthM * 0.5 - frontBiasM;
+  const pts = [];
+
+  for (const uFrac of [-1, -0.5, 0, 0.5, 1]) {
+    const alongM = uFrac * halfW;
+    for (const vFrac of [0, 0.25, 0.5, 0.75, 1]) {
+      const forwardM = -backD + vFrac * (frontD + backD);
+      pts.push([
+        centerLng + (alongUx * alongM + faceFx * forwardM) / METERS_PER_DEG_LNG,
+        centerLat + (alongUy * alongM + faceFy * forwardM) / METERS_PER_DEG_LAT,
+      ]);
+    }
+  }
+  return pts;
+}
+
+function doesRoadClipOrientedLot(
+  centerLng,
+  centerLat,
+  alongUx,
+  alongUy,
+  faceFx,
+  faceFy,
+  halfWidthM,
+  halfDepthM,
+  roadSegmentsLngLat,
+  roadBufferM
+) {
+  const cx = centerLng * METERS_PER_DEG_LNG;
+  const cy = centerLat * METERS_PER_DEG_LAT;
+  const boundU = halfWidthM + roadBufferM;
+  const boundV = halfDepthM + roadBufferM;
+
+  for (let i = 0; i < roadSegmentsLngLat.length; i++) {
+    const [lng1, lat1, lng2, lat2] = roadSegmentsLngLat[i];
+    const ax = lng1 * METERS_PER_DEG_LNG - cx;
+    const ay = lat1 * METERS_PER_DEG_LAT - cy;
+    const bx = lng2 * METERS_PER_DEG_LNG - cx;
+    const by = lat2 * METERS_PER_DEG_LAT - cy;
+
+    const u0 = ax * alongUx + ay * alongUy;
+    const v0 = ax * faceFx + ay * faceFy;
+    const u1 = bx * alongUx + by * alongUy;
+    const v1 = bx * faceFx + by * faceFy;
+
+    if (
+      (u0 < -boundU && u1 < -boundU) ||
+      (u0 > boundU && u1 > boundU) ||
+      (v0 < -boundV && v1 < -boundV) ||
+      (v0 > boundV && v1 > boundV)
+    ) {
+      continue;
+    }
+
+    const du = u1 - u0;
+    const dv = v1 - v0;
+    let tMin = 0;
+    let tMax = 1;
+
+    const clipAxis = (p, q) => {
+      if (Math.abs(p) < 1e-8) return q >= 0;
+      const r = q / p;
+      if (p < 0) {
+        if (r > tMax) return false;
+        if (r > tMin) tMin = r;
+      } else {
+        if (r < tMin) return false;
+        if (r < tMax) tMax = r;
+      }
+      return true;
+    };
+
+    if (
+      clipAxis(-du, u0 + boundU) &&
+      clipAxis(du, boundU - u0) &&
+      clipAxis(-dv, v0 + boundV) &&
+      clipAxis(dv, boundV - v0) &&
+      tMin <= tMax
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function doOrientedLotRingsOverlap(ringA, ringB, padM = 1.8) {
+  if (!Array.isArray(ringA) || !Array.isArray(ringB) || ringA.length < 4 || ringB.length < 4) {
+    return false;
+  }
+
+  const ptsA = [
+    [ringA[0][0] * METERS_PER_DEG_LNG, ringA[0][1] * METERS_PER_DEG_LAT],
+    [ringA[1][0] * METERS_PER_DEG_LNG, ringA[1][1] * METERS_PER_DEG_LAT],
+    [ringA[2][0] * METERS_PER_DEG_LNG, ringA[2][1] * METERS_PER_DEG_LAT],
+    [ringA[3][0] * METERS_PER_DEG_LNG, ringA[3][1] * METERS_PER_DEG_LAT],
+  ];
+  const ptsB = [
+    [ringB[0][0] * METERS_PER_DEG_LNG, ringB[0][1] * METERS_PER_DEG_LAT],
+    [ringB[1][0] * METERS_PER_DEG_LNG, ringB[1][1] * METERS_PER_DEG_LAT],
+    [ringB[2][0] * METERS_PER_DEG_LNG, ringB[2][1] * METERS_PER_DEG_LAT],
+    [ringB[3][0] * METERS_PER_DEG_LNG, ringB[3][1] * METERS_PER_DEG_LAT],
+  ];
+
+  const axes = [];
+  for (const poly of [ptsA, ptsB]) {
+    for (let i = 0; i < 2; i++) {
+      const ex = poly[i + 1][0] - poly[i][0];
+      const ey = poly[i + 1][1] - poly[i][1];
+      const len = Math.hypot(ex, ey);
+      if (len > 1e-6) {
+        axes.push([-ey / len, ex / len]);
+      }
+    }
+  }
+
+  for (let a = 0; a < axes.length; a++) {
+    const [ax, ay] = axes[a];
+    let minA = Infinity;
+    let maxA = -Infinity;
+    let minB = Infinity;
+    let maxB = -Infinity;
+
+    for (let i = 0; i < 4; i++) {
+      const projA = ptsA[i][0] * ax + ptsA[i][1] * ay;
+      if (projA < minA) minA = projA;
+      if (projA > maxA) maxA = projA;
+
+      const projB = ptsB[i][0] * ax + ptsB[i][1] * ay;
+      if (projB < minB) minB = projB;
+      if (projB > maxB) maxB = projB;
+    }
+
+    if (maxA + padM <= minB || maxB + padM <= minA) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function resolveMacroBlockTransform(lat, lng, bid, archetype) {
+  const bearingDeg = resolveOrthogonalRoadAngle(lat, lng, bid);
+  const yawDeg = Number((((90 - bearingDeg) % 360 + 360) % 360).toFixed(1));
+  return {
+    bearingDeg,
+    roadAngle: bearingDeg,
+    yawDeg,
+    scaleVec: computeColossalScaleVec(lng, lat, archetype, 1),
+  };
+}
+
+const OSM_CLEAR_CELL_DEG = 0.001;
+const OSM_BUILDING_GRID = new Map();
+for (let i = 0; i < NAGA_OSM_BUILDINGS.length; i++) {
+  const b = NAGA_OSM_BUILDINGS[i];
+  if (b?.lat == null || b?.lng == null) continue;
+  const key = `${Math.floor(b.lat / OSM_CLEAR_CELL_DEG)},${Math.floor(b.lng / OSM_CLEAR_CELL_DEG)}`;
+  let bucket = OSM_BUILDING_GRID.get(key);
+  if (!bucket) {
+    bucket = [];
+    OSM_BUILDING_GRID.set(key, bucket);
+  }
+  bucket.push(b);
+}
+
+function isNearRealOsmBuildingM(lat, lng, minRadiusM) {
+  const r0 = Math.floor(lat / OSM_CLEAR_CELL_DEG);
+  const c0 = Math.floor(lng / OSM_CLEAR_CELL_DEG);
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const bucket = OSM_BUILDING_GRID.get(`${r0 + dr},${c0 + dc}`);
+      if (!bucket) continue;
+      for (let i = 0; i < bucket.length; i++) {
+        if (distanceMeters(lat, lng, bucket[i].lat, bucket[i].lng) < minRadiusM) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+export function generateProceduralInfill(waterPoints = [], evacuationCamps = []) {
+  const generated = [];
+
+  const roadTiers = [
+    { archetype: 'shophouse_commercial', prefix: 'PROC-SHOP', groups: [NAGA_OSM_SECONDARY_ROADS, NAGA_TERTIARY_ROADS] },
+    { archetype: 'house_residential', prefix: 'PROC-HOUSE', groups: [NAGA_LOCAL_STREETS] },
+  ];
+
+  let seqId = 1;
+  for (let t = 0; t < roadTiers.length; t++) {
+    const { archetype, prefix, groups } = roadTiers[t];
+    for (let g = 0; g < groups.length; g++) {
+      const polylines = groups[g];
+      if (!Array.isArray(polylines)) continue;
+      for (let p = 0; p < polylines.length; p++) {
+        const line = polylines[p];
+        if (!Array.isArray(line) || line.length < 2) continue;
+        let nextSpawnM = PROCEDURAL_STEP_M * 0.5;
+        let accM = 0;
+
+        for (let s = 0; s < line.length - 1; s++) {
+          const [aLat, aLng] = line[s];
+          const [bLat, bLng] = line[s + 1];
+          const dxEast = (bLng - aLng) * METERS_PER_DEG_LNG;
+          const dyNorth = (bLat - aLat) * METERS_PER_DEG_LAT;
+          const segLenM = Math.hypot(dxEast, dyNorth);
+          if (segLenM < 1) continue;
+
+          const ux = dxEast / segLenM;
+          const uy = dyNorth / segLenM;
+          const nx = -uy;
+          const ny = ux;
+
+          while (nextSpawnM <= accM + segLenM) {
+            const alongM = nextSpawnM - accM;
+            const baseLat = aLat + (uy * alongM) / METERS_PER_DEG_LAT;
+            const baseLng = aLng + (ux * alongM) / METERS_PER_DEG_LNG;
+
+            for (const side of [-1, 1]) {
+              const lat = Number((baseLat + (ny * PROCEDURAL_OFFSET_M * side) / METERS_PER_DEG_LAT).toFixed(6));
+              const lng = Number((baseLng + (nx * PROCEDURAL_OFFSET_M * side) / METERS_PER_DEG_LNG).toFixed(6));
+
+              const barangay = resolveBarangayName(lat, lng);
+              if (!barangay) continue;
+              if (isNearRealOsmBuildingM(lat, lng, MIN_OSM_CLEARANCE_M)) continue;
+              if (isNearAnyRoadM(lat, lng, MIN_PROCEDURAL_ROAD_CLEARANCE_M)) continue;
+              if (isInsideWaterwayClearance(lat, lng)) continue;
+
+              let blockedByFacility =
+                distanceMeters(lat, lng, CDRRMO_HUB.lat, CDRRMO_HUB.lng) < MIN_FACILITY_CLEARANCE_M;
+              if (!blockedByFacility && Array.isArray(waterPoints)) {
+                for (let w = 0; w < waterPoints.length; w++) {
+                  if (distanceMeters(lat, lng, waterPoints[w].lat, waterPoints[w].lng) < MIN_FACILITY_CLEARANCE_M) {
+                    blockedByFacility = true;
+                    break;
+                  }
+                }
+              }
+              if (blockedByFacility) continue;
+
+              let blockedByCamp = false;
+              if (Array.isArray(evacuationCamps)) {
+                for (let c = 0; c < evacuationCamps.length; c++) {
+                  if (
+                    distanceMeters(lat, lng, evacuationCamps[c].lat, evacuationCamps[c].lng) <
+                    MIN_CIVIC_LANDMARK_CLEARANCE_M
+                  ) {
+                    blockedByCamp = true;
+                    break;
+                  }
+                }
+              }
+              if (blockedByCamp) continue;
+
+              const procId = `${prefix}-${seqId++}`;
+              const { bearingDeg, roadAngle, yawDeg, scaleVec } = resolveMacroBlockTransform(
+                lat,
+                lng,
+                procId,
+                archetype
+              );
+
+              generated.push({
+                id: procId,
+                lat,
+                lng,
+                barangay,
+                areaM2: archetype === 'shophouse_commercial' ? 205 : 155,
+                archetype,
+                bearingDeg,
+                roadAngle,
+                yawDeg,
+                scaleVec,
+                elevation_m: getTerrainElevationM(lat, lng),
+                isEvacLandmark: false,
+                isProcedural: true,
+              });
+            }
+            nextSpawnM += PROCEDURAL_STEP_M;
+          }
+          accM += segLenM;
+        }
+      }
+    }
+  }
+
+  return generated;
+}
+
+const STATIC_TITAN_CANDIDATES = (() => {
+  const osmItems = [];
+  const seenIds = new Set();
+
+  for (let i = 0; i < NAGA_OSM_BUILDINGS.length; i++) {
+    const b = NAGA_OSM_BUILDINGS[i];
+    if (b?.lat == null || b?.lng == null) continue;
+    const bid = b.id || `BLDG-${i + 1}`;
+    if (seenIds.has(bid)) continue;
+    seenIds.add(bid);
+    if (isInsideWaterwayClearance(b.lat, b.lng)) continue;
+
+    const areaM2 = computeLotFootprintAreaM2(b);
+    const majorRoadDistM = getMajorRoadDistanceM(b.lat, b.lng);
+    const archetype = classifyUrbanArchetype(areaM2, majorRoadDistM);
+    const { bearingDeg, roadAngle, yawDeg, scaleVec } = resolveMacroBlockTransform(
+      b.lat,
+      b.lng,
+      bid,
+      archetype
+    );
+
+    osmItems.push({
+      id: bid,
+      lat: b.lat,
+      lng: b.lng,
+      barangay: b.barangay || resolveBarangayName(b.lat, b.lng),
+      areaM2: Math.round(areaM2),
+      archetype,
+      bearingDeg,
+      roadAngle,
+      yawDeg,
+      scaleVec,
+      elevation_m: getTerrainElevationM(b.lat, b.lng),
+      isEvacLandmark: false,
+      isProcedural: false,
     });
   }
 
-  // Ground front window + crisp standing-seam hipped roof w/ white eave fascia
-  addResidentialWindow(buckets, groupMat, coreX - sideFlip * coreW * 0.22, groundH * 0.56 + 0.008, baseZ + bd * 0.46, coreW * 0.24, groundH * 0.42, 1, {
-    hoodHex: '#E2E8F0',
-  });
-  addLocalBox(buckets.masonry, groupMat, 0, 0.006 + h, baseZ + (levels >= 2 ? 0.004 : 0), bw * 1.10, 0.006, bd * 1.10, '#F1EDE4');
-  const rotY = bd > bw ? Math.PI * 0.5 : 0;
-  const rx = rotY === 0 ? bw * 1.14 : bd * 1.14;
-  const rz = rotY === 0 ? bd * 1.14 : bw * 1.14;
-  addLocalRoof(buckets.roof, groupMat, 'hipped', 0, h + 0.008, baseZ + (levels >= 2 ? 0.004 : 0), rx, roofH, rz, roofHex, rotY);
+  const procItems = generateProceduralInfill([], []);
+  return [...osmItems, ...procItems];
+})();
+
+function resolveEvacuationCivicHalls(evacuationCamps = INITIAL_EVACUATION_CAMPS_FALLBACK) {
+  const sourceList =
+    Array.isArray(evacuationCamps) && evacuationCamps.length > 0
+      ? evacuationCamps
+      : INITIAL_EVACUATION_CAMPS_FALLBACK;
+
+  const targetDefs = [
+    {
+      matchId: 'CAMP-01',
+      matchName: 'Robredo',
+      badgeTitle: 'EVACUATION CAMP · JMR Coliseum',
+      yawDeg: 0,
+      fallback: INITIAL_EVACUATION_CAMPS_FALLBACK[0],
+    },
+    {
+      matchId: 'CAMP-02',
+      matchName: "People's Hall",
+      badgeTitle: "EVACUATION CAMP · Naga City People's Hall",
+      yawDeg: 90,
+      fallback: INITIAL_EVACUATION_CAMPS_FALLBACK[1],
+    },
+  ];
+
+  return targetDefs
+    .map((def) => {
+      const matched =
+        sourceList.find(
+          (c) => c.id === def.matchId || c.name?.toLowerCase().includes(def.matchName.toLowerCase())
+        ) || def.fallback;
+      if (!matched || matched.lat == null || matched.lng == null) return null;
+      const campLat = Number(matched.lat);
+      const campLng = Number(matched.lng);
+      const { bearingDeg, roadAngle, yawDeg } = resolveMacroBlockTransform(
+        campLat,
+        campLng,
+        matched.id || def.matchId,
+        'civic_hall'
+      );
+      return {
+        id: matched.id,
+        name: matched.name,
+        barangay_name: matched.barangay_name,
+        badgeTitle: def.badgeTitle,
+        status: matched.status,
+        evacuees: matched.evacuees,
+        lat: campLat,
+        lng: campLng,
+        bearingDeg,
+        roadAngle,
+        yawDeg,
+        scaleVec: [10.0, 10.5, 10.0],
+        elevation_m: getTerrainElevationM(campLat, campLng),
+        archetype: 'civic_hall',
+        isEvacLandmark: true,
+      };
+    })
+    .filter(Boolean);
 }
 
-// ============================================================================
-// COMMERCIAL GENERATORS (Stage 2 baseline — upgraded in Stage 4)
-// ============================================================================
+const CITY_POOL_CACHE = new Map();
+const MAX_POOL_CACHE_ENTRIES = 8;
+const EMPTY_VIEWPORT_CACHE = new WeakMap();
 
-function appendFootprintBuilding(buckets, b, groupMat) {
-  const wallColor = WALL_PALETTE[b.tone] || '#E9E2D4';
-  const accentColor = b.accentColor || '#3B5266';
-  const levels = Math.max(2, b.levels || 3);
-  const podiumH = Math.min(0.088, b.h * 0.28);
-  const upperH = Math.max(0.07, b.h - podiumH);
-  const pts = b.footprint;
-
-  // Grounding skirt + concrete plinth
-  addExtrudedPolyPart(buckets.foundation, groupMat, pts, -0.34, 0.348, 0.96, '#B8C1CC');
-  addExtrudedPolyPart(buckets.foundation, groupMat, pts, 0.002, 0.010, 1.01, '#CBD5E1');
-  // Glazed ground-floor lobby / retail podium
-  addExtrudedPolyPart(buckets.glass, groupMat, pts, 0.010, podiumH, 0.95, '#89AFC9');
-  addExtrudedPolyPart(buckets.accent, groupMat, pts, podiumH + 0.006, 0.014, 1.02, '#EFE8DA');
-  // Upper masonry massing + per-storey spandrel/window bands
-  addExtrudedPolyPart(buckets.masonry, groupMat, pts, podiumH + 0.020, upperH, 0.99, wallColor);
-  const storyH = upperH / Math.max(1, levels - 1);
-  for (let lv = 1; lv < levels; lv++) {
-    const sy = podiumH + 0.020 + (lv - 0.5) * storyH;
-    addExtrudedPolyPart(buckets.glass, groupMat, pts, sy - storyH * 0.20, storyH * 0.42, 0.996, '#9BB8CE');
-    addExtrudedPolyPart(buckets.trim, groupMat, pts, sy - storyH * 0.45, 0.007, 1.01, '#D6DCE3');
+export function buildCityBuildingPool(
+  waterPoints = INITIAL_NAGA_POINTS,
+  evacuationCamps = INITIAL_EVACUATION_CAMPS_FALLBACK,
+  scaleMultiplier = EXAGGERATION_MULTIPLIER
+) {
+  const wpKey = Array.isArray(waterPoints)
+    ? waterPoints.map((p) => `${p.id}:${Number(p.lat).toFixed(5)},${Number(p.lng).toFixed(5)}`).join('|')
+    : '';
+  const campKey = Array.isArray(evacuationCamps)
+    ? evacuationCamps
+        .map((c) => `${c.id}:${Number(c.lat).toFixed(5)},${Number(c.lng).toFixed(5)}:${c.status || ''}:${c.evacuees || 0}`)
+        .join('|')
+    : '';
+  const cacheKey = `${scaleMultiplier}__${wpKey}__${campKey}`;
+  if (CITY_POOL_CACHE.has(cacheKey)) {
+    return CITY_POOL_CACHE.get(cacheKey);
   }
-  // Crown parapet + dark roof + rooftop HVAC/elevator bulkhead
-  addExtrudedPolyPart(buckets.trim, groupMat, pts, b.h + 0.020, 0.016, 1.018, accentColor);
-  addExtrudedPolyPart(buckets.roof, groupMat, pts, b.h + 0.024, 0.008, 0.92, '#475569');
-  addLocalBox(buckets.trim, groupMat, 0, b.h + 0.044, 0, Math.min(b.w * 0.26, 0.055), 0.026, Math.min(b.d * 0.26, 0.048), '#64748B');
-  addLocalBox(buckets.trim, groupMat, b.w * 0.16, b.h + 0.036, -b.d * 0.12, Math.min(b.w * 0.12, 0.026), 0.012, Math.min(b.d * 0.12, 0.024), '#94A3B8');
-}
 
-function appendStage4Commercial(buckets, b, groupMat) {
-  const { w, d, h } = b;
-  const hsh = hashBuilding(b);
-  const style = hsh % 5;
-  const levels = Math.max(2, b.levels || 3);
-  const wallHex = WALL_PALETTE[b.tone] || '#E5E2DC';
-  const accentHex = b.accentColor || '#2D4A63';
-  const bw = w * 0.92;
-  const bd = d * 0.90;
+  const evacHalls = resolveEvacuationCivicHalls(evacuationCamps);
+  const scaleFactor =
+    Number.isFinite(scaleMultiplier) && EXAGGERATION_MULTIPLIER > 0
+      ? scaleMultiplier / EXAGGERATION_MULTIPLIER
+      : 1;
+  const finalCulledBuildings = [];
 
-  // Grounding foundation skirt + sidewalk plinth
-  addLocalBox(buckets.foundation, groupMat, 0, -0.17, 0, w * 0.96, 0.34, d * 0.96, '#AEB7C2');
-  addLocalBox(buckets.foundation, groupMat, 0, 0.005, 0, w * 0.99, 0.010, d * 0.99, '#CBD5E1');
+  for (let i = 0; i < STATIC_TITAN_CANDIDATES.length; i++) {
+    const candidate = STATIC_TITAN_CANDIDATES[i];
+    if (isInsideWaterwayClearance(candidate.lat, candidate.lng)) {
+      continue;
+    }
 
-  // -------------------------------------------------------------------------
-  // ARCH 0: Twin Silver/Blue-Glass Podium Tower (759c3332) or Slanted Ribbon Tower (8b169c44)
-  // -------------------------------------------------------------------------
-  if (style === 0) {
-    const podiumH = Math.min(0.085, h * 0.26);
-    if (hsh % 2 === 0 || levels >= 4) {
-      // Twin-wing glass tower on 2F podium
-      addLocalBox(buckets.masonry, groupMat, 0, podiumH * 0.5 + 0.008, 0, bw, podiumH, bd, '#D4DCE4');
-      addLocalBox(buckets.glass, groupMat, 0, podiumH * 0.5 + 0.008, 0, bw * 0.88, podiumH * 0.68, bd * 1.01, '#6C98B8');
-      addLocalBox(buckets.trim, groupMat, 0, podiumH + 0.010, 0, bw * 1.03, 0.008, bd * 1.03, '#94A3B8');
+    if (
+      haversineDistanceM(candidate.lat, candidate.lng, CDRRMO_HUB.lat, CDRRMO_HUB.lng) <=
+      MIN_FACILITY_CLEARANCE_M
+    ) {
+      continue;
+    }
 
-      const towerH = Math.max(0.08, h - podiumH);
-      const wingW = bw * 0.41;
-      const wingOff = bw * 0.26;
-      // Central recessed glass core
-      addLocalBox(buckets.glass, groupMat, 0, podiumH + 0.014 + towerH * 0.5, 0, bw * 0.22, towerH, bd * 0.72, '#5E8CAE');
-      for (const sx of [-1, 1]) {
-        addLocalBox(buckets.glass, groupMat, sx * wingOff, podiumH + 0.014 + towerH * 0.5, 0, wingW, towerH, bd * 0.86, '#7DA8C8');
-        addLocalBox(buckets.trim, groupMat, sx * wingOff, podiumH + 0.014 + towerH + 0.012, 0, wingW * 0.72, 0.022, bd * 0.64, '#CBD5E1');
+    let blockedByFacility = false;
+    for (let j = 0; j < waterPoints.length; j++) {
+      if (
+        haversineDistanceM(candidate.lat, candidate.lng, waterPoints[j].lat, waterPoints[j].lng) <=
+        MIN_FACILITY_CLEARANCE_M
+      ) {
+        blockedByFacility = true;
+        break;
       }
-      // Horizontal aluminum brise-soleil fin bands
-      for (let lv = 1; lv < levels; lv++) {
-        const fy = podiumH + 0.014 + (lv / levels) * towerH;
-        addLocalBox(buckets.trim, groupMat, 0, fy, 0, bw * 0.96, 0.005, bd * 0.90, '#CBD5E1');
+    }
+    if (blockedByFacility) continue;
+
+    let blockedByCamp = false;
+    for (let j = 0; j < evacHalls.length; j++) {
+      if (
+        haversineDistanceM(candidate.lat, candidate.lng, evacHalls[j].lat, evacHalls[j].lng) <
+        MIN_CIVIC_LANDMARK_CLEARANCE_M
+      ) {
+        blockedByCamp = true;
+        break;
       }
+    }
+    if (blockedByCamp) continue;
+
+    let collidesWithPlaced = false;
+    for (let j = 0; j < finalCulledBuildings.length; j++) {
+      const placed = finalCulledBuildings[j];
+      if (
+        haversineDistanceM(candidate.lat, candidate.lng, placed.lat, placed.lng) <
+        MIN_MACRO_CLEARANCE_M
+      ) {
+        collidesWithPlaced = true;
+        break;
+      }
+    }
+    if (collidesWithPlaced) continue;
+
+    if (Math.abs(scaleFactor - 1) > 1e-4 && Array.isArray(candidate.scaleVec)) {
+      finalCulledBuildings.push({
+        ...candidate,
+        scaleVec: candidate.scaleVec.map((v) => Number((v * scaleFactor).toFixed(3))),
+      });
     } else {
-      // 8b169c44-style modern slanted glass & white-ribbon tower with V-columns
-      addLocalBox(buckets.foundation, groupMat, 0, 0.014, bd * 0.06, bw * 0.98, 0.012, bd * 0.96, '#DCE3EA');
-      const lobbyH = Math.min(0.075, h * 0.24);
-      addLocalBox(buckets.glass, groupMat, 0, lobbyH * 0.5 + 0.018, 0, bw * 0.76, lobbyH, bd * 0.76, '#4D7C9E');
-      // V-column supports at front corner
-      addLocalBox(buckets.masonry, groupMat, -bw * 0.30, lobbyH * 0.5 + 0.018, bd * 0.34, 0.012, lobbyH, 0.012, '#E2E8F0');
-      addLocalBox(buckets.masonry, groupMat, bw * 0.30, lobbyH * 0.5 + 0.018, bd * 0.34, 0.012, lobbyH, 0.012, '#E2E8F0');
-
-      const upperH = Math.max(0.08, h - lobbyH);
-      addLocalBox(buckets.glass, groupMat, 0, lobbyH + 0.018 + upperH * 0.5, 0, bw * 0.88, upperH, bd * 0.86, '#4B82AB');
-      for (let lv = 0; lv < levels; lv++) {
-        const ry = lobbyH + 0.022 + (lv / levels) * upperH;
-        addLocalBox(buckets.masonry, groupMat, 0, ry, 0, bw * 0.93, 0.009, bd * 0.91, '#F1F5F9');
-      }
-      addLocalBox(buckets.trim, groupMat, 0, h + 0.022, 0, bw * 0.92, 0.010, bd * 0.88, '#94A3B8');
+      finalCulledBuildings.push(candidate);
     }
-    return;
   }
 
-  // -------------------------------------------------------------------------
-  // ARCH 1: Tan/Grey Masonry CBD Mid-Rise (38e18599)
-  // -------------------------------------------------------------------------
-  if (style === 1) {
-    const cbdTones = ['#C5B6A2', '#B7ADA0', '#CEC3B4'];
-    const cbdWall = cbdTones[hsh % cbdTones.length];
-    const storyH = h / levels;
-    // Ground-floor dark shopfront & subtle awning
-    addLocalBox(buckets.stoneBrick, groupMat, 0, storyH * 0.5 + 0.008, 0, bw * 1.01, storyH, bd * 1.01, '#6E6A63', 2, 1);
-    addLocalBox(buckets.glass, groupMat, 0, storyH * 0.44 + 0.008, bd * 0.506, bw * 0.72, storyH * 0.62, 0.004, '#5B768B');
-    addLocalBox(buckets.trim, groupMat, 0, storyH * 0.84 + 0.008, bd * 0.53, bw * 0.84, 0.007, 0.018, '#334155');
-
-    const upH = Math.max(0.06, h - storyH);
-    addLocalBox(buckets.masonry, groupMat, 0, 0.008 + storyH + upH * 0.5, 0, bw, upH, bd, cbdWall, 2, 2);
-    for (let lv = 1; lv < levels; lv++) {
-      const ly = 0.008 + lv * storyH;
-      addLocalBox(buckets.trim, groupMat, 0, ly, 0, bw * 1.03, 0.006, bd * 1.03, '#9E9384');
-      addLocalBox(buckets.glass, groupMat, 0, ly + storyH * 0.52, 0, bw * 0.78, storyH * 0.48, bd * 1.008, '#475E70');
-      addLocalBox(buckets.glass, groupMat, 0, ly + storyH * 0.52, 0, bw * 1.008, storyH * 0.48, bd * 0.74, '#475E70');
-    }
-    // Crown cornice + rooftop mechanical bulkhead
-    addLocalBox(buckets.trim, groupMat, 0, h + 0.014, 0, bw * 1.04, 0.012, bd * 1.04, '#8A7E6E');
-    addLocalBox(buckets.roof, groupMat, 0, h + 0.020, 0, bw * 0.94, 0.006, bd * 0.94, '#475569');
-    addLocalBox(buckets.masonry, groupMat, -bw * 0.16, h + 0.036, 0, bw * 0.30, 0.028, bd * 0.32, '#B6ACA0');
-    return;
+  const result = { evacHalls, pool: finalCulledBuildings };
+  if (CITY_POOL_CACHE.size >= MAX_POOL_CACHE_ENTRIES) {
+    const oldestKey = CITY_POOL_CACHE.keys().next().value;
+    CITY_POOL_CACHE.delete(oldestKey);
   }
-
-  // -------------------------------------------------------------------------
-  // ARCH 2: Naga Retail Plaza / Commercial Strip with Colonnade & Awnings
-  // -------------------------------------------------------------------------
-  if (style === 2) {
-    const podiumH = Math.min(0.08, h * 0.42);
-    const awningTones = ['#9E3D2E', '#2D6A73', '#2F4D6D', '#B56E33'];
-    const awningHex = awningTones[hsh % awningTones.length];
-    addLocalBox(buckets.masonry, groupMat, 0, h * 0.5 + 0.008, 0, bw, h, bd, wallHex, 2, 1.5);
-    // Ground-floor glazed storefronts + colonnade piers
-    addLocalBox(buckets.glass, groupMat, 0, podiumH * 0.46 + 0.008, bd * 0.504, bw * 0.84, podiumH * 0.74, 0.005, '#7FA2BC');
-    addLocalBox(buckets.woodCanopy, groupMat, 0, podiumH * 0.90 + 0.008, bd * 0.54, bw * 0.94, 0.008, 0.024, awningHex);
-    // Subtle restrained Naga shopfront fascia
-    addLocalBox(buckets.accent, groupMat, 0, podiumH + 0.016, bd * 0.51, bw * 0.62, 0.012, 0.006, accentHex);
-    if (levels >= 2) {
-      addLocalBox(buckets.glass, groupMat, 0, podiumH + (h - podiumH) * 0.54 + 0.008, 0, bw * 0.80, (h - podiumH) * 0.44, bd * 1.008, '#93B2C8');
-    }
-    addLocalBox(buckets.trim, groupMat, 0, h + 0.014, 0, bw * 1.03, 0.012, bd * 1.03, accentHex);
-    addLocalBox(buckets.roof, groupMat, 0, h + 0.018, 0, bw * 0.94, 0.006, bd * 0.94, '#475569');
-    addLocalBox(buckets.trim, groupMat, bw * 0.18, h + 0.028, -bd * 0.12, 0.022, 0.014, 0.020, '#94A3B8');
-    return;
-  }
-
-  // -------------------------------------------------------------------------
-  // ARCH 3: 3F Red-Brick & White-Quoined Heritage Corner Building (963dd789)
-  // -------------------------------------------------------------------------
-  if (style === 3) {
-    const baseH = h * 0.28;
-    const upperH = Math.max(0.06, h - baseH);
-    const quoinHex = '#ECE4D6';
-    addLocalBox(buckets.stoneBrick, groupMat, 0, baseH * 0.5 + 0.008, 0, bw * 1.02, baseH, bd * 1.02, '#8F8A82', 2, 1);
-    addLocalBox(buckets.stoneBrick, groupMat, 0, 0.008 + baseH + upperH * 0.5, 0, bw, upperH, bd, '#B45B43', 2.4, 2);
-    for (const qx of [-bw * 0.49, bw * 0.49]) {
-      for (const qz of [-bd * 0.49, bd * 0.49]) {
-        addLocalBox(buckets.masonry, groupMat, qx, 0.008 + baseH + upperH * 0.5, qz, 0.012, upperH, 0.012, quoinHex);
-      }
-    }
-    // Central entrance portico & triangular gable accent
-    addLocalBox(buckets.masonry, groupMat, 0, baseH * 0.55 + 0.008, bd * 0.53, bw * 0.28, baseH * 0.9, 0.020, quoinHex);
-    addLocalBox(buckets.glass, groupMat, 0, 0.008 + baseH + upperH * 0.52, 0, bw * 0.76, upperH * 0.42, bd * 1.008, '#536A7B');
-    // Green hipped heritage roof
-    addLocalRoof(buckets.roof, groupMat, 'hipped', 0, h + 0.008, 0, bw * 1.08, Math.min(0.065, h * 0.34), bd * 1.08, '#2D6853', 0);
-    return;
-  }
-
-  // -------------------------------------------------------------------------
-  // ARCH 4: Modern Corner Glass & Composite Commercial Block
-  // -------------------------------------------------------------------------
-  const podiumH = Math.min(0.08, h * 0.28);
-  const storyH = (h - podiumH) / Math.max(1, levels - 1);
-  addLocalBox(buckets.glass, groupMat, 0, podiumH * 0.5 + 0.008, 0, bw * 0.94, podiumH, bd * 0.94, '#799EB9');
-  addLocalBox(buckets.accent, groupMat, 0, podiumH + 0.012, 0, bw * 1.03, 0.010, bd * 1.03, accentHex);
-  const upperH = Math.max(0.06, h - podiumH);
-  addLocalBox(buckets.masonry, groupMat, 0, podiumH + 0.014 + upperH * 0.5, 0, bw, upperH, bd, wallHex, 1.8, 1.8);
-  for (let lv = 1; lv < levels; lv++) {
-    const wy = podiumH + 0.014 + (lv - 0.5) * storyH;
-    addLocalBox(buckets.glass, groupMat, 0, wy, 0, bw * 0.84, storyH * 0.48, bd * 1.012, '#8FB5D0');
-    addLocalBox(buckets.glass, groupMat, 0, wy, 0, bw * 1.012, storyH * 0.48, bd * 0.80, '#8FB5D0');
-    addLocalBox(buckets.trim, groupMat, 0, wy - storyH * 0.42, 0, bw * 1.02, 0.006, bd * 1.02, '#CBD5E1');
-  }
-  addLocalBox(buckets.trim, groupMat, 0, h + 0.018, 0, bw * 1.03, 0.014, bd * 1.03, accentHex);
-  addLocalBox(buckets.roof, groupMat, 0, h + 0.022, 0, bw * 0.94, 0.006, bd * 0.94, '#475569');
-  addLocalBox(buckets.trim, groupMat, -bw * 0.14, h + 0.038, 0, bw * 0.26, 0.024, bd * 0.26, '#64748B');
+  CITY_POOL_CACHE.set(cacheKey, result);
+  return result;
 }
 
-export function buildBatchedCityChunks(buildings) {
-  const chunkBuckets = new Map();
-  const posVec = new THREE.Vector3();
-  const quat = new THREE.Quaternion();
-  const scaleOne = new THREE.Vector3(1, 1, 1);
-  const groupMat = new THREE.Matrix4();
+export function selectViewportCityBuildings(
+  poolData,
+  viewport = {},
+  maxInstances = MAX_VIEWPORT_BUILDINGS
+) {
+  const getEmptyResult = () => {
+    if (poolData && typeof poolData === 'object') {
+      const cached = EMPTY_VIEWPORT_CACHE.get(poolData);
+      if (cached) return cached;
+      const empty = {
+        totalSelected: 0,
+        evacHalls: poolData.evacHalls || [],
+        civicHalls: poolData.evacHalls || [],
+        byArchetype: {
+          house_residential: [],
+          shophouse_commercial: [],
+          midrise_building: [],
+          civic_hall: poolData.evacHalls || [],
+        },
+      };
+      EMPTY_VIEWPORT_CACHE.set(poolData, empty);
+      return empty;
+    }
+    return {
+      totalSelected: 0,
+      evacHalls: [],
+      civicHalls: [],
+      byArchetype: {
+        house_residential: [],
+        shophouse_commercial: [],
+        midrise_building: [],
+        civic_hall: [],
+      },
+    };
+  };
+  if (!poolData || !Array.isArray(poolData.pool)) return getEmptyResult();
 
-  for (const b of buildings) {
-    const [x, y, z] = geoToWorld(b.lat, b.lng);
-    const gx = Math.floor((x + 8) / 8.5);
-    const gz = Math.floor((z + 9) / 8.0);
-    const key = `${gx},${gz}`;
-    if (!chunkBuckets.has(key)) {
-      chunkBuckets.set(key, {
-        foundation: [],
-        masonry: [],
-        stoneBrick: [],
-        accent: [],
-        roof: [],
-        glass: [],
-        woodCanopy: [],
-        trim: [],
+  const zoom = Number(viewport.zoom) || 0;
+  if (zoom < DETAIL_BUILDINGS_MIN_ZOOM) {
+    return getEmptyResult();
+  }
+
+  const centerLat = Number.isFinite(viewport.centerLat) ? viewport.centerLat : 13.624;
+  const centerLng = Number.isFinite(viewport.centerLng) ? viewport.centerLng : 123.2002;
+  const rawBounds = viewport.bounds;
+
+  let minLat;
+  let maxLat;
+  let minLng;
+  let maxLng;
+  if (
+    rawBounds &&
+    Number.isFinite(rawBounds.north) &&
+    Number.isFinite(rawBounds.south) &&
+    Number.isFinite(rawBounds.east) &&
+    Number.isFinite(rawBounds.west)
+  ) {
+    const padLat = Math.max(0.001, (rawBounds.north - rawBounds.south) * 0.15);
+    const padLng = Math.max(0.001, (rawBounds.east - rawBounds.west) * 0.15);
+    minLat = rawBounds.south - padLat;
+    maxLat = rawBounds.north + padLat;
+    minLng = rawBounds.west - padLng;
+    maxLng = rawBounds.east + padLng;
+  } else {
+    minLat = centerLat - 0.012;
+    maxLat = centerLat + 0.012;
+    minLng = centerLng - 0.012;
+    maxLng = centerLng + 0.012;
+  }
+
+  const inView = [];
+  const pool = poolData.pool;
+  for (let i = 0; i < pool.length; i++) {
+    const b = pool[i];
+    if (b.lat < minLat || b.lat > maxLat || b.lng < minLng || b.lng > maxLng) continue;
+    const dLat = (b.lat - centerLat) * METERS_PER_DEG_LAT;
+    const dLng = (b.lng - centerLng) * METERS_PER_DEG_LNG;
+    inView.push({ entry: b, distSq: dLat * dLat + dLng * dLng });
+  }
+
+  inView.sort((a, b) => a.distSq - b.distSq);
+  const limit = Math.min(inView.length, maxInstances);
+
+  const byArchetype = {
+    house_residential: [],
+    shophouse_commercial: [],
+    midrise_building: [],
+    civic_hall: [...poolData.evacHalls],
+  };
+
+  for (let i = 0; i < limit; i++) {
+    const entry = inView[i].entry;
+    byArchetype[entry.archetype]?.push(entry);
+  }
+
+  return {
+    totalSelected: limit,
+    evacHalls: poolData.evacHalls,
+    civicHalls: byArchetype.civic_hall,
+    byArchetype,
+  };
+}
+
+export function buildCuratedCityBuildings(
+  waterPoints = INITIAL_NAGA_POINTS,
+  evacuationCamps = INITIAL_EVACUATION_CAMPS_FALLBACK
+) {
+  const poolData = buildCityBuildingPool(waterPoints, evacuationCamps);
+  return selectViewportCityBuildings(poolData, {
+    zoom: 16.0,
+    centerLat: 13.621,
+    centerLng: 123.192,
+    bounds: { north: 13.665, south: 13.595, east: 123.26, west: 123.15 },
+  });
+}
+
+// ============================================================================
+// HIGH-DENSITY BARANGAY LATTICE (TIGHTER SEPARATION + WIDER SIDEWALK CLEARANCE)
+// ============================================================================
+
+const SIMCITY_FIXED_SPACING_M = 1.8;
+const SIMCITY_LOCAL_ROAD_BUFFER_M = 21.5;
+const SIMCITY_MAIN_ROAD_BUFFER_M = 27.5;
+const SIMCITY_MIN_RIVER_CLEARANCE_M = 30;
+const SIMCITY_MIN_CREEK_CLEARANCE_M = 24;
+const SIMCITY_MIN_FACILITY_CLEARANCE_M = 46;
+const SIMCITY_MIN_CIVIC_CLEARANCE_M = 90;
+
+const SIMCITY_TARGET_MIDRISE_COUNT = 3;
+const SIMCITY_TARGET_SHOPHOUSE_COUNT = 5;
+const SIMCITY_TARGET_HOUSE_COUNT = 8;
+const SIMCITY_MAX_BARANGAY_BUILDINGS =
+  SIMCITY_TARGET_MIDRISE_COUNT + SIMCITY_TARGET_SHOPHOUSE_COUNT + SIMCITY_TARGET_HOUSE_COUNT;
+
+function normalizeBrgyKey(name) {
+  return String(name || '')
+    .replace(/^brgy\.?\s*/i, '')
+    .trim()
+    .toLowerCase();
+}
+
+function pointInPolygonRingLngLat(lng, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0];
+    const yi = ring[i][1];
+    const xj = ring[j][0];
+    const yj = ring[j][1];
+    const intersect =
+      yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi + 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function isInsidePolygonGeometryLngLat(lng, lat, geometry) {
+  if (!geometry) return true;
+  if (geometry.type === 'Polygon') {
+    const [outer, ...holes] = geometry.coordinates || [];
+    if (!outer || !pointInPolygonRingLngLat(lng, lat, outer)) return false;
+    for (const hole of holes) {
+      if (pointInPolygonRingLngLat(lng, lat, hole)) return false;
+    }
+    return true;
+  }
+  if (geometry.type === 'MultiPolygon') {
+    for (const poly of geometry.coordinates || []) {
+      const [outer, ...holes] = poly;
+      if (outer && pointInPolygonRingLngLat(lng, lat, outer)) {
+        let inHole = false;
+        for (const hole of holes) {
+          if (pointInPolygonRingLngLat(lng, lat, hole)) {
+            inHole = true;
+            break;
+          }
+        }
+        if (!inHole) return true;
+      }
+    }
+    return false;
+  }
+  return true;
+}
+
+function getGeometryBBoxLngLat(geometry) {
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+
+  const scanRing = (ring) => {
+    for (let i = 0; i < ring.length; i++) {
+      const [lng, lat] = ring[i];
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+  };
+
+  if (geometry?.type === 'Polygon') {
+    for (const ring of geometry.coordinates || []) scanRing(ring);
+  } else if (geometry?.type === 'MultiPolygon') {
+    for (const poly of geometry.coordinates || []) {
+      for (const ring of poly) scanRing(ring);
+    }
+  }
+
+  return Number.isFinite(minLng) ? { minLng, maxLng, minLat, maxLat } : null;
+}
+
+function minDistanceToSegmentsLngLat(lng, lat, segmentsLngLat) {
+  let minD = Infinity;
+  for (let i = 0; i < segmentsLngLat.length; i++) {
+    const [lng1, lat1, lng2, lat2] = segmentsLngLat[i];
+    const d = pointToSegmentDistanceM(lat, lng, lat1, lng1, lat2, lng2);
+    if (d < minD) minD = d;
+  }
+  return minD;
+}
+
+function getMasterLatticeOrientation(lng, lat, segmentsLngLat, gridUx, gridUy) {
+  const gridNx = -gridUy;
+  const gridNy = gridUx;
+  let bestDist = Infinity;
+  let bestToStreetX = gridNx;
+  let bestToStreetY = gridNy;
+
+  for (let i = 0; i < segmentsLngLat.length; i++) {
+    const [lng1, lat1, lng2, lat2] = segmentsLngLat[i];
+    const ax = lng1 * METERS_PER_DEG_LNG;
+    const ay = lat1 * METERS_PER_DEG_LAT;
+    const bx = lng2 * METERS_PER_DEG_LNG;
+    const by = lat2 * METERS_PER_DEG_LAT;
+    const px = lng * METERS_PER_DEG_LNG;
+    const py = lat * METERS_PER_DEG_LAT;
+
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq < 16) continue;
+
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+    const cx = ax + t * dx;
+    const cy = ay + t * dy;
+    const toStreetX = cx - px;
+    const toStreetY = cy - py;
+    const dist = Math.hypot(toStreetX, toStreetY);
+
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestToStreetX = toStreetX;
+      bestToStreetY = toStreetY;
+    }
+  }
+
+  const projN = bestToStreetX * gridNx + bestToStreetY * gridNy;
+  const sign = projN >= 0 ? 1 : -1;
+  const faceFx = gridNx * sign;
+  const faceFy = gridNy * sign;
+  const alongUx = gridUx * sign;
+  const alongUy = gridUy * sign;
+  const rawBearing = (Math.atan2(faceFx, faceFy) * 180) / Math.PI;
+  const faceBearingDeg = ((rawBearing % 360) + 360) % 360;
+
+  return {
+    distM: bestDist,
+    alongUx,
+    alongUy,
+    faceFx,
+    faceFy,
+    faceBearingDeg,
+  };
+}
+
+const SIMCITY_LAYOUT_CACHE = new Map();
+
+export function buildBarangaySimCityLayout({
+  barangayName,
+  barangayGeometry = null,
+  waterPoints = INITIAL_NAGA_POINTS,
+  evacHalls = [],
+}) {
+  const emptyBuckets = {
+    house_residential: [],
+    shophouse_commercial: [],
+    midrise_building: [],
+    zoneBoxRing: null,
+  };
+  if (!barangayName) return emptyBuckets;
+
+  const targetNorm = normalizeBrgyKey(barangayName);
+  const wpSig = waterPoints.map((p) => `${p.id}:${Number(p.lat).toFixed(5)},${Number(p.lng).toFixed(5)}`).join('|');
+  const cacheKey = `${targetNorm}__simcity_v25_ultra_tight_wide_roads__${wpSig}__${evacHalls.length}`;
+  if (SIMCITY_LAYOUT_CACHE.has(cacheKey)) {
+    return SIMCITY_LAYOUT_CACHE.get(cacheKey);
+  }
+
+  let resolvedGeom = barangayGeometry;
+  if (!resolvedGeom) {
+    const feat = (NAGA_BARANGAYS_GEOJSON?.features || []).find(
+      (f) => normalizeBrgyKey(f?.properties?.name) === targetNorm
+    );
+    if (feat?.geometry?.type === 'Polygon') {
+      resolvedGeom = {
+        type: 'Polygon',
+        coordinates: feat.geometry.coordinates.map((ring) => ring.map(([lat, lng]) => [lng, lat])),
+      };
+    }
+  }
+
+  const bbox = getGeometryBBoxLngLat(resolvedGeom);
+  if (!bbox) return emptyBuckets;
+
+  const centerLng = (bbox.minLng + bbox.maxLng) * 0.5;
+  const centerLat = (bbox.minLat + bbox.maxLat) * 0.5;
+  const spanE = (bbox.maxLng - bbox.minLng) * METERS_PER_DEG_LNG;
+  const spanN = (bbox.maxLat - bbox.minLat) * METERS_PER_DEG_LAT;
+  const maxSpanM = Math.max(spanE, spanN) * 0.76;
+
+  const zoneBoxRing =
+    resolvedGeom?.type === 'Polygon'
+      ? resolvedGeom.coordinates?.[0] || null
+      : resolvedGeom?.type === 'MultiPolygon'
+      ? resolvedGeom.coordinates?.[0]?.[0] || null
+      : null;
+
+  const padLng = 0.0024;
+  const padLat = 0.0024;
+
+  const arterialPolylines = [
+    ...NAGA_OSM_PRIMARY_ROADS.map((line) => ({ tier: 'primary', coords: line.map(([lat, lng]) => [lng, lat]) })),
+    ...NAGA_OSM_SECONDARY_ROADS.map((line) => ({ tier: 'secondary', coords: line.map(([lat, lng]) => [lng, lat]) })),
+    ...NAGA_TERTIARY_ROADS.map((line) => ({ tier: 'tertiary', coords: line.map(([lat, lng]) => [lng, lat]) })),
+    ...NAGA_LOCAL_STREETS.map((line) => ({ tier: 'local', coords: line.map(([lat, lng]) => [lng, lat]) })),
+  ];
+
+  const allRoadSegments = [];
+  const mainRoadSegments = [];
+  let longestMainLen = 0;
+  let gridUx = 1;
+  let gridUy = 0;
+  let anchorLng = centerLng;
+  let anchorLat = centerLat;
+
+  for (let i = 0; i < arterialPolylines.length; i++) {
+    const { tier, coords } = arterialPolylines[i];
+    if (!Array.isArray(coords) || coords.length < 2) continue;
+
+    for (let j = 0; j < coords.length - 1; j++) {
+      const [lng1, lat1] = coords[j];
+      const [lng2, lat2] = coords[j + 1];
+
+      const segMinLng = Math.min(lng1, lng2);
+      const segMaxLng = Math.max(lng1, lng2);
+      const segMinLat = Math.min(lat1, lat2);
+      const segMaxLat = Math.max(lat1, lat2);
+      if (
+        segMaxLng < bbox.minLng - padLng ||
+        segMinLng > bbox.maxLng + padLng ||
+        segMaxLat < bbox.minLat - padLat ||
+        segMinLat > bbox.maxLat + padLat
+      ) {
+        continue;
+      }
+
+      allRoadSegments.push([lng1, lat1, lng2, lat2]);
+
+      const dE = (lng2 - lng1) * METERS_PER_DEG_LNG;
+      const dN = (lat2 - lat1) * METERS_PER_DEG_LAT;
+      const segLen = Math.hypot(dE, dN);
+
+      if (tier === 'primary' || tier === 'secondary') {
+        mainRoadSegments.push([lng1, lat1, lng2, lat2]);
+        const midLng = (lng1 + lng2) * 0.5;
+        const midLat = (lat1 + lat2) * 0.5;
+        const insideBrgy =
+          !resolvedGeom || isInsidePolygonGeometryLngLat(midLng, midLat, resolvedGeom);
+        const weightLen = insideBrgy ? segLen * 2.5 : segLen;
+        if (weightLen > longestMainLen && segLen > 15) {
+          longestMainLen = weightLen;
+          gridUx = dE / segLen;
+          gridUy = dN / segLen;
+          anchorLng = midLng;
+          anchorLat = midLat;
+        }
+      }
+    }
+  }
+
+  const gridNx = -gridUy;
+  const gridNy = gridUx;
+
+  const placedLotRings = [];
+  const buckets = {
+    house_residential: [],
+    shophouse_commercial: [],
+    midrise_building: [],
+    zoneBoxRing,
+  };
+
+  const canPlaceBarangayLatticeLot = (lng, lat, alongUx, alongUy, faceFx, faceFy, spec, lotRing, samplePoints) => {
+    if (resolvedGeom && !isInsidePolygonGeometryLngLat(lng, lat, resolvedGeom)) {
+      return false;
+    }
+
+    for (let s = 0; s < samplePoints.length; s++) {
+      const [sLng, sLat] = samplePoints[s];
+      if (resolvedGeom && !isInsidePolygonGeometryLngLat(sLng, sLat, resolvedGeom)) {
+        return false;
+      }
+      if (isInsideWaterwayClearance(sLat, sLng, 16, 12)) {
+        return false;
+      }
+      for (let i = 0; i < waterPoints.length; i++) {
+        const pt = waterPoints[i];
+        if (pt?.lat == null || pt?.lng == null) continue;
+        if (distanceMeters(sLat, sLng, pt.lat, pt.lng) < 32) {
+          return false;
+        }
+      }
+    }
+
+    if (
+      doesRoadClipOrientedLot(
+        lng,
+        lat,
+        alongUx,
+        alongUy,
+        faceFx,
+        faceFy,
+        spec.lotWidthM * 0.5,
+        spec.lotDepthM * 0.5,
+        mainRoadSegments,
+        SIMCITY_MAIN_ROAD_BUFFER_M
+      )
+    ) {
+      return false;
+    }
+    if (
+      doesRoadClipOrientedLot(
+        lng,
+        lat,
+        alongUx,
+        alongUy,
+        faceFx,
+        faceFy,
+        spec.lotWidthM * 0.5,
+        spec.lotDepthM * 0.5,
+        allRoadSegments,
+        SIMCITY_LOCAL_ROAD_BUFFER_M
+      )
+    ) {
+      return false;
+    }
+
+    if (isInsideWaterwayClearance(lat, lng, SIMCITY_MIN_RIVER_CLEARANCE_M, SIMCITY_MIN_CREEK_CLEARANCE_M)) {
+      return false;
+    }
+    if (distanceMeters(lat, lng, CDRRMO_HUB.lat, CDRRMO_HUB.lng) < SIMCITY_MIN_FACILITY_CLEARANCE_M) {
+      return false;
+    }
+    for (let i = 0; i < waterPoints.length; i++) {
+      const pt = waterPoints[i];
+      if (pt?.lat == null || pt?.lng == null) continue;
+      if (distanceMeters(lat, lng, pt.lat, pt.lng) < SIMCITY_MIN_FACILITY_CLEARANCE_M) {
+        return false;
+      }
+    }
+    for (let i = 0; i < evacHalls.length; i++) {
+      const camp = evacHalls[i];
+      if (camp?.lat == null || camp?.lng == null) continue;
+      if (distanceMeters(lat, lng, camp.lat, camp.lng) < SIMCITY_MIN_CIVIC_CLEARANCE_M) {
+        return false;
+      }
+    }
+
+    for (let i = 0; i < placedLotRings.length; i++) {
+      if (doOrientedLotRingsOverlap(lotRing, placedLotRings[i], SIMCITY_FIXED_SPACING_M)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Compact 58m x 56m street-aligned lattice for tight Philippine barangay block density
+  const colPitchM = 58;
+  const rowPitchM = 56;
+  const maxCols = Math.ceil(maxSpanM / colPitchM) + 1;
+  const maxRows = Math.ceil(maxSpanM / rowPitchM) + 1;
+
+  const latticeCells = [];
+  for (let rIdx = -maxRows; rIdx <= maxRows; rIdx++) {
+    if (rIdx === 0) continue;
+    const rowSign = rIdx > 0 ? 1 : -1;
+    const baseVM =
+      rowSign * (SIMCITY_MAIN_ROAD_BUFFER_M + 28) + (rIdx - rowSign) * rowPitchM;
+
+    for (let cIdx = -maxCols; cIdx <= maxCols; cIdx++) {
+      const baseUM = cIdx * colPitchM;
+      const eastM = gridUx * baseUM + gridNx * baseVM;
+      const northM = gridUy * baseUM + gridNy * baseVM;
+      const testLng = anchorLng + eastM / METERS_PER_DEG_LNG;
+      const testLat = anchorLat + northM / METERS_PER_DEG_LAT;
+
+      const mainDistM =
+        mainRoadSegments.length > 0
+          ? minDistanceToSegmentsLngLat(testLng, testLat, mainRoadSegments)
+          : Math.abs(baseVM);
+
+      latticeCells.push({
+        cIdx,
+        rIdx,
+        baseUM,
+        baseVM,
+        testLng,
+        testLat,
+        mainDistM,
       });
     }
-    const buckets = chunkBuckets.get(key);
-    posVec.set(x, y, z);
-    quat.setFromAxisAngle(Y_AXIS, b.rot || 0);
-    groupMat.compose(posVec, quat, scaleOne);
+  }
 
-    if (b.footprint && Array.isArray(b.footprint) && b.footprint.length >= 4) {
-      appendFootprintBuilding(buckets, b, groupMat);
-    } else if (b.type === 'residential_hip') {
-      appendStage3Residential(buckets, b, groupMat);
-    } else {
-      appendStage4Commercial(buckets, b, groupMat);
+  let totalPlaced = 0;
+  let midrisePlaced = 0;
+  let shophousePlaced = 0;
+  let housePlaced = 0;
+  const usedCellKeys = new Set();
+
+  const tryPlaceInLatticeCell = (cell, archetype, tag) => {
+    if (totalPlaced >= SIMCITY_MAX_BARANGAY_BUILDINGS) return false;
+    const cellKey = `${cell.cIdx}:${cell.rIdx}`;
+    if (usedCellKeys.has(cellKey)) return false;
+
+    const spec = computeSimCityLotSpec(archetype);
+
+    const vOffsets = [0, 5, -5, 10, -10, 15, -15, 20, -20];
+    const uOffsets = [0, 6, -6, 12, -12, 18, -18];
+
+    for (let vi = 0; vi < vOffsets.length; vi++) {
+      for (let ui = 0; ui < uOffsets.length; ui++) {
+        const uM = cell.baseUM + uOffsets[ui];
+        const vM = cell.baseVM + vOffsets[vi];
+        const eastM = gridUx * uM + gridNx * vM;
+        const northM = gridUy * uM + gridNy * vM;
+        const lng = Number((anchorLng + eastM / METERS_PER_DEG_LNG).toFixed(6));
+        const lat = Number((anchorLat + northM / METERS_PER_DEG_LAT).toFixed(6));
+
+        if (resolvedGeom && !isInsidePolygonGeometryLngLat(lng, lat, resolvedGeom)) {
+          continue;
+        }
+
+        const orient = getMasterLatticeOrientation(lng, lat, allRoadSegments, gridUx, gridUy);
+        const { alongUx, alongUy, faceFx, faceFy, faceBearingDeg } = orient;
+
+        const lotRing = buildOrientedRectRingLngLat(
+          lng,
+          lat,
+          alongUx,
+          alongUy,
+          faceFx,
+          faceFy,
+          spec.lotWidthM,
+          spec.lotDepthM,
+          0
+        );
+        const samplePoints = buildLotSamplePointsLngLat(
+          lng,
+          lat,
+          alongUx,
+          alongUy,
+          faceFx,
+          faceFy,
+          spec.lotWidthM,
+          spec.lotDepthM,
+          0
+        );
+
+        if (
+          !canPlaceBarangayLatticeLot(
+            lng,
+            lat,
+            alongUx,
+            alongUy,
+            faceFx,
+            faceFy,
+            spec,
+            lotRing,
+            samplePoints
+          )
+        ) {
+          continue;
+        }
+
+        const yawDeg = computeStreetFacingYawDeg(archetype, faceBearingDeg);
+        const id = `SIM-${targetNorm.toUpperCase()}-${tag}-${totalPlaced + 1}`;
+
+        usedCellKeys.add(cellKey);
+        placedLotRings.push(lotRing);
+        buckets[archetype].push({
+          id,
+          lat,
+          lng,
+          barangay: barangayName,
+          archetype,
+          bearingDeg: faceBearingDeg,
+          roadAngle: faceBearingDeg,
+          yawDeg,
+          scaleVec: spec.scaleVec,
+          lotWidthM: spec.lotWidthM,
+          lotDepthM: spec.lotDepthM,
+          lotRing,
+          elevation_m: getTerrainElevationM(lat, lng),
+          isEvacLandmark: false,
+          isProcedural: true,
+        });
+        totalPlaced++;
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const avenueCells = [...latticeCells].sort((a, b) => a.mainDistM - b.mainDistM);
+
+  for (let i = 0; i < avenueCells.length && midrisePlaced < SIMCITY_TARGET_MIDRISE_COUNT; i++) {
+    if (tryPlaceInLatticeCell(avenueCells[i], 'midrise_building', 'TWR')) {
+      midrisePlaced++;
     }
   }
 
-  const chunks = [];
-  for (const [key, buckets] of chunkBuckets.entries()) {
-    const merged = {};
-    for (const [bucketName, list] of Object.entries(buckets)) {
-      if (list.length === 0) continue;
-      merged[bucketName] = mergeGeometries(list, false);
-      for (const item of list) item.dispose();
+  for (let i = 0; i < avenueCells.length && shophousePlaced < SIMCITY_TARGET_SHOPHOUSE_COUNT; i++) {
+    if (tryPlaceInLatticeCell(avenueCells[i], 'shophouse_commercial', 'SHOP')) {
+      shophousePlaced++;
     }
-    chunks.push({ key, geometries: merged });
   }
-  return chunks;
+
+  for (let i = 0; i < avenueCells.length && housePlaced < SIMCITY_TARGET_HOUSE_COUNT; i++) {
+    if (tryPlaceInLatticeCell(avenueCells[i], 'house_residential', 'RES')) {
+      housePlaced++;
+    }
+  }
+
+  SIMCITY_LAYOUT_CACHE.set(cacheKey, buckets);
+  return buckets;
+}
+
+export function buildSimCityLotGeoJson(viewportBuildings) {
+  const features = [];
+  const byType = viewportBuildings?.byArchetype || {};
+
+  for (const archetype of ['house_residential', 'shophouse_commercial', 'midrise_building']) {
+    const list = byType[archetype] || [];
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
+      if (Array.isArray(b.lotRing) && b.lotRing.length >= 4) {
+        features.push({
+          type: 'Feature',
+          properties: {
+            id: `${b.id}-lot`,
+            kind: 'lot',
+            archetype,
+          },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [b.lotRing],
+          },
+        });
+      }
+    }
+  }
+
+  return {
+    type: 'FeatureCollection',
+    features,
+  };
 }
