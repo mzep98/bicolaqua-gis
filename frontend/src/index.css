@@ -3,14 +3,137 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --left-drawer-width: 360px;
+    /* Perceptually balanced sRGB-safe OKLCH tokens */
+    --ba-brand: oklch(0.58 0.14 238);
+    --ba-brand-hover: oklch(0.51 0.14 238);
+    --ba-surface: oklch(0.99 0.004 240 / 0.94);
+    --ba-surface-solid: oklch(0.995 0.002 240);
+    --ba-border: oklch(0.22 0.02 255 / 0.09);
+    --ba-border-strong: oklch(0.22 0.02 255 / 0.15);
+    --ba-safe: oklch(0.64 0.15 162);
+    --ba-advisory: oklch(0.74 0.16 74);
+    --ba-critical: oklch(0.61 0.21 26);
+  }
+
   html,
   body,
   #root {
     height: 100%;
+    height: 100dvh;
     margin: 0;
     padding: 0;
+    overflow: hidden;
     background-color: #CBD5E1;
     color: #0F172A;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+}
+
+/* Compositor-only (transform + opacity) HUD motion primitives */
+@keyframes hudEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes hudShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+
+.hud-enter {
+  animation: hudEnter 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.hud-shake {
+  animation: hudShake 320ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+.hud-press {
+  transition-property: transform, background-color, border-color, color, opacity;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.hud-press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.hud-surface {
+  background: var(--ba-surface);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--ba-border);
+  box-shadow: 0 10px 28px -10px oklch(0.18 0.03 255 / 0.16);
+}
+
+.solar-track-day {
+  background: linear-gradient(90deg, #0284C7 0%, #38BDF8 65%, #F59E0B 100%);
+  background: linear-gradient(in oklch to right, oklch(0.58 0.14 238) 0%, oklch(0.75 0.13 224) 62%, oklch(0.76 0.16 74) 100%);
+}
+
+.solar-track-night {
+  background: linear-gradient(90deg, #4F46E5 0%, #0284C7 60%, #F59E0B 100%);
+  background: linear-gradient(in oklch to right, oklch(0.51 0.20 272) 0%, oklch(0.58 0.14 238) 58%, oklch(0.76 0.16 74) 100%);
+}
+
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
+}
+
+/* WCAG 2.2 SC 2.3.3 — Respect reduced motion globally */
+@media (prefers-reduced-motion: reduce) {
+  .hud-enter,
+  .hud-shake,
+  .animate-pulse,
+  .animate-spin {
+    animation: none !important;
+  }
+
+  .hud-press,
+  .hud-press:active {
+    transition-duration: 0.01ms !important;
+    transform: none !important;
+  }
+}
+
+/* Subtle refined scrollbars for floating HUD panels */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.45);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.65);
+}
+
+/* Crisp inset dropdown chevron for HUD select controls */
+.hud-surface select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 1.85rem !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 14px 14px;
 }

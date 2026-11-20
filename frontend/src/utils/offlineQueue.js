@@ -1,5 +1,5 @@
 const QUEUE_KEY = 'bicolaqua_offline_inspections_v1';
-const CACHE_KEY = 'bicolaqua_cached_points_v1';
+const CACHE_KEY = 'bicolaqua_cached_points_v3';
 
 export function getOfflineQueue() {
   try {
